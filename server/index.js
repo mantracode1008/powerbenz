@@ -79,10 +79,10 @@ const apiRouter = express.Router();
 apiRouter.get('/version', (req, res) => {
     res.json({
 
-        version: '1.6.8', // FINAL-FIX
+        version: '1.6.9', // CLIENT-FIX-UPDATE
         timestamp: new Date().toISOString(),
         auth_status: 'Active',
-        deploy_id: 'VPS-FIX-2'
+        deploy_id: 'VPS-CLIENT-FIX'
     });
 });
 
