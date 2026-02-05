@@ -13,7 +13,7 @@ const app = express();
 // Trust Proxy (Required for Rate Limiting behind proxy like Render/Vercel)
 app.set('trust proxy', 1);
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 
 // Sentry Initialization (Disabled for v10 compatibility fix)
 // const Sentry = require('@sentry/node');

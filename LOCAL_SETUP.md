@@ -26,7 +26,7 @@ cd server
 npm install
 npm start
 ```
-(Runs on port 5000)
+(Runs on port 5001)
 
 **Web Client:**
 ```bash

@@ -43,7 +43,7 @@ npm install --production
 # DB Name: scrap_system (verified on VPS)
 echo "Creating .env..."
 cat > .env <<EOF
-PORT=5000
+PORT=5001
 JWT_SECRET=secretkey
 EMAIL_USER=admin@powerbenz.com
 EMAIL_PASS=tsehwvmowxblbbld
