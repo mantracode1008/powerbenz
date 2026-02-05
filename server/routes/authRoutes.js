@@ -100,6 +100,7 @@ router.post('/login', async (req, res) => {
         const { email, password, userId, pin, name, workerNo } = req.body;
         let staff;
 
+
         // SCENARIO 1: PIN LOGIN (Updated to support Name/WorkerNo)
         if (pin && (userId || name || workerNo)) {
             if (userId) {
@@ -118,7 +119,13 @@ router.post('/login', async (req, res) => {
             }
 
             if (!staff) return res.status(404).json({ message: 'User not found.' });
-            if (!staff.isActive) return res.status(403).json({ message: 'Account is deactivated.' });
+
+            console.log(`[AUTH] Checking Active Status for ${staff.name} (ID: ${staff.id}): ${staff.isActive}`);
+
+            if (!staff.isActive) {
+                console.log('[AUTH] User is inactive, returning 409');
+                return res.status(409).json({ message: 'Account is deactivated.' });
+            }
 
             let isMatch = false;
             if (staff.pin) {

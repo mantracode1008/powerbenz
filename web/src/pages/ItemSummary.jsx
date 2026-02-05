@@ -135,9 +135,12 @@ const ItemSummary = () => {
     };
 
     const grandTotalPurchase = items.reduce((sum, item) => sum + (parseFloat(item.totalQty) || 0), 0);
-    const grandTotalStock = items.reduce((sum, item) => sum + (parseFloat(item.activeStock) || 0), 0);
-    const grandTotalStockValue = items.reduce((sum, item) => sum + (parseFloat(item.stockValue) || 0), 0);
-    const grandTotalSold = grandTotalPurchase - grandTotalStock;
+    const grandTotalStock = items.reduce((sum, item) => sum + (parseFloat(item.currentStock !== undefined ? item.currentStock : item.activeStock) || 0), 0);
+    const grandTotalStockValue = items.reduce((sum, item) => sum + (parseFloat(item.currentStockValue !== undefined ? item.currentStockValue : item.stockValue) || 0), 0);
+
+    // Sold = Purchase - (No, use Real Sales from Backend)
+    // If backend provides soldQty, use it. Else fallback.
+    const grandTotalSold = items.reduce((sum, item) => sum + (parseFloat(item.soldQty !== undefined ? item.soldQty : (item.totalQty - item.activeStock)) || 0), 0);
 
     const handleItemClick = async (item) => {
         const itemId = item._id || item.itemId || item.id;
@@ -338,8 +341,11 @@ const ItemSummary = () => {
         // 2. Prepare Data
         items.forEach((item, idx) => {
             const purchase = parseFloat(item.totalQty) || 0;
-            const stock = parseFloat(item.activeStock) || 0;
-            const sold = purchase - stock;
+            const stock = parseFloat(item.currentStock !== undefined ? item.currentStock : item.activeStock) || 0;
+
+            // Sold = Real Sales (soldQty) if available
+            const remainingBatch = parseFloat(item.activeStock) || 0;
+            const sold = item.soldQty !== undefined ? parseFloat(item.soldQty) : (purchase - remainingBatch);
 
             const row = [
                 idx + 1,
@@ -457,8 +463,10 @@ const ItemSummary = () => {
 
         items.forEach((item, index) => {
             const purchase = parseFloat(item.totalQty) || 0;
-            const stock = parseFloat(item.activeStock) || 0;
-            const sold = purchase - stock;
+            const stock = parseFloat(item.currentStock !== undefined ? item.currentStock : item.activeStock) || 0;
+            // Sold = Real Sales (soldQty) if available
+            const remainingBatch = parseFloat(item.activeStock) || 0;
+            const sold = item.soldQty !== undefined ? parseFloat(item.soldQty) : (purchase - remainingBatch);
 
             const itemData = [
                 index + 1,
@@ -702,7 +710,8 @@ const ItemSummary = () => {
                                 <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-500">No items found</td></tr>
                             ) : (
                                 items.map((item, idx) => {
-                                    const soldQty = (parseFloat(item.totalQty) || 0) - (parseFloat(item.activeStock) || 0);
+                                    // Use Real Sales (soldQty) if available, else fallback
+                                    const soldQty = item.soldQty !== undefined ? parseFloat(item.soldQty) : ((parseFloat(item.totalQty) || 0) - (parseFloat(item.activeStock) || 0));
                                     const isSelected = selectedItems.has(item.itemName);
 
                                     return (
@@ -777,11 +786,11 @@ const ItemSummary = () => {
                                                     {soldQty > 0.001 ? soldQty.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}
                                                 </td>
                                                 <td className="px-6 py-3 text-right text-emerald-700 font-bold font-mono bg-emerald-50/30">
-                                                    {item.activeStock > 0 ? parseFloat(item.activeStock).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}
+                                                    {(item.currentStock !== undefined ? item.currentStock : item.activeStock) > 0 ? parseFloat(item.currentStock !== undefined ? item.currentStock : item.activeStock).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}
                                                 </td>
                                                 {canViewRates && (
                                                     <td className="px-6 py-3 text-right text-blue-700 font-bold font-mono">
-                                                        {item.stockValue > 0 ? parseFloat(item.stockValue).toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '-'}
+                                                        {(item.currentStockValue !== undefined ? item.currentStockValue : item.stockValue) > 0 ? parseFloat(item.currentStockValue !== undefined ? item.currentStockValue : item.stockValue).toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '-'}
                                                     </td>
                                                 )}
                                             </tr>

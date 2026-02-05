@@ -753,6 +753,59 @@ exports.getItemSummary = async (req, res) => {
             raw: true
         });
 
+        // 2.5 Fetch Global Stock (Matches Dashboard)
+        const globalStockData = await ContainerItem.findAll({
+            attributes: [
+                [sequelize.fn('TRIM', sequelize.fn('UPPER', sequelize.col('itemName'))), 'normName'],
+                [sequelize.fn('SUM', sequelize.col('remainingQuantity')), 'totalStock'],
+                [sequelize.literal('SUM(remainingQuantity * rate)'), 'totalValue']
+            ],
+            group: [sequelize.fn('TRIM', sequelize.fn('UPPER', sequelize.col('itemName')))],
+            having: sequelize.where(sequelize.fn('SUM', sequelize.col('remainingQuantity')), '>', 0.001),
+            raw: true
+        });
+
+        const globalStockMap = {};
+        const globalValueMap = {};
+
+        globalStockData.forEach(g => {
+            globalStockMap[g.normName] = parseFloat(g.totalStock) || 0;
+            globalValueMap[g.normName] = parseFloat(g.totalValue) || 0;
+        });
+
+        // 2.6 Fetch Real Sales Data (From Sales Table)
+        let salesWhere = '';
+        const salesReplacements = {};
+
+        if (start && end) {
+            salesWhere = `WHERE ${q}date${q} BETWEEN :startDate AND :endDate`;
+            salesReplacements.startDate = start;
+            salesReplacements.endDate = end;
+        }
+
+        const salesQuery = `
+            SELECT 
+                TRIM(UPPER(${q}itemName${q})) as ${q}normName${q},
+                SUM(${q}quantity${q}) as ${q}soldQty${q},
+                SUM(${q}totalAmount${q}) as ${q}soldAmt${q}
+            FROM ${q}Sales${q}
+            ${salesWhere}
+            GROUP BY TRIM(UPPER(${q}itemName${q}))
+        `;
+
+        const salesData = await sequelize.query(salesQuery, {
+            replacements: salesReplacements,
+            type: sequelize.QueryTypes.SELECT
+        });
+
+        const salesMap = {};
+        salesData.forEach(s => {
+            salesMap[s.normName] = {
+                qty: parseFloat(s.soldQty) || 0,
+                val: parseFloat(s.soldAmt) || 0
+            };
+        });
+
         // 3. Process Data for Matrix
         const itemMap = new Map();
         const uniqueContainers = new Set();
@@ -813,8 +866,18 @@ exports.getItemSummary = async (req, res) => {
 
         const finalItems = mergedItems.map(item => {
             const pctVal = (grandTotalQty > 0) ? ((item.totalQty / grandTotalQty) * 100) : 0;
+            // Map global stock
+            const normName = item.itemName.trim().toUpperCase();
+            const currentStock = globalStockMap[normName] || 0;
+            const currentStockValue = globalValueMap[normName] || 0;
+            const realSales = salesMap[normName] || { qty: 0, val: 0 };
+
             return {
                 ...item,
+                currentStock: currentStock, // Add global stock
+                currentStockValue: currentStockValue, // Add global stock value
+                soldQty: realSales.qty, // Overwrite/Add real sales qty
+                soldVal: realSales.val, // Add real sales value
                 percentage: pctVal.toFixed(2)
             };
         });
