@@ -85,8 +85,9 @@ exports.createSale = async (req, res) => {
                 return sum + (isNaN(qty) ? 0 : qty);
             }, 0);
 
-            if (parsedQty > totalAvailable) {
-                throw new Error(`Insufficient stock for ${itemName}! Available: ${totalAvailable.toFixed(2)}, Requested: ${parsedQty.toFixed(2)}`);
+            if (parsedQty > totalAvailable + 0.001) {
+                const diff = parsedQty - totalAvailable;
+                throw new Error(`Insufficient stock for ${itemName}! Available: ${totalAvailable.toFixed(2)}, Requested: ${parsedQty.toFixed(2)} (Missing: ${diff.toFixed(2)})`);
             }
 
             // 3. Determine Allocations
@@ -117,7 +118,7 @@ exports.createSale = async (req, res) => {
                     // If user adds Copper twice, we might have overlap. complex.
                     // Ideally frontend prevents adding same item twice or merges them.
 
-                    if (parseFloat(containerItem.remainingQuantity) < scQty) {
+                    if (parseFloat(containerItem.remainingQuantity) + 0.001 < scQty) {
                         throw new Error(`Insufficient stock in container for ${itemName}.`);
                     }
 
@@ -411,8 +412,9 @@ exports.updateSale = async (req, res) => {
             return sum + (isNaN(qty) ? 0 : qty);
         }, 0);
 
-        if (finalQuantity > totalAvailable) {
-            throw new Error(`Insufficient stock for update! Available: ${totalAvailable.toFixed(2)}, Requested: ${finalQuantity.toFixed(2)}`);
+        if (finalQuantity > totalAvailable + 0.001) {
+            const diff = finalQuantity - totalAvailable;
+            throw new Error(`Insufficient stock for update! Available: ${totalAvailable.toFixed(2)}, Requested: ${finalQuantity.toFixed(2)} (Missing: ${diff.toFixed(2)})`);
         }
 
         // 4. DETERMINE NEW ALLOCATIONS
@@ -437,7 +439,7 @@ exports.updateSale = async (req, res) => {
                     throw new Error(`Container item ${sc.containerItemId} not found or has no stock.`);
                 }
 
-                if (parseFloat(containerItem.remainingQuantity) < scQty) {
+                if (parseFloat(containerItem.remainingQuantity) + 0.001 < scQty) {
                     throw new Error(`Insufficient stock in container ${containerItem.Container?.containerNo}`);
                 }
 
