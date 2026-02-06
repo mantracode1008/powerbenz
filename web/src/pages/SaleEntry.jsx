@@ -13,11 +13,12 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import XLSX from 'xlsx-js-style';
 import { useAuth } from '../context/AuthContext';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 const SaleEntry = () => {
     const { user } = useAuth();
     const location = useLocation();
+    const navigate = useNavigate();
 
     // TAB STATE: 'entry' or 'history'
     const [activeTab, setActiveTab] = useState('entry');
@@ -61,29 +62,57 @@ const SaleEntry = () => {
 
     // INITIALIZE CART FROM NAVIGATION
     useEffect(() => {
-        if (location.state?.selectedItems && masterItems.length > 0) {
-            console.log("Receiving items from navigation:", location.state.selectedItems);
-            const importedItems = location.state.selectedItems.map(item => ({
-                id: Date.now() + Math.random(),
-                itemName: item.itemName,
-                availableStock: item.currentStock || 0,
-                quantity: '',
-                rate: '',
-                hsnCode: item.hsnCode || '7204',
-                amount: 0,
-                sourceContainers: [], // Specific container allocation
-                isExpanded: false
-            }));
+        if (location.state && masterItems.length > 0) {
+            // 1. Restore Invoice Data (if returning from picking more items)
+            if (location.state.preservedInvoiceData) {
+                setInvoiceData(prev => ({ ...prev, ...location.state.preservedInvoiceData }));
+            }
 
-            setCartItems(prev => {
-                if (prev.length === 0) return importedItems;
-                return prev;
-            });
+            // 2. Handle Selected Items (Merge Logic)
+            if (location.state.selectedItems) {
+                const incomingRaw = location.state.selectedItems;
 
-            // Prefetch stock for these items
-            importedItems.forEach(i => fetchStockForItem(i.itemName));
+                setCartItems(prev => {
+                    const existingMap = new Map(prev.map(i => [i.itemName, i]));
+                    const nextCart = [];
+
+                    incomingRaw.forEach(rawItem => {
+                        if (existingMap.has(rawItem.itemName)) {
+                            // Keep existing item (preserves Qty/Rate inputs)
+                            nextCart.push(existingMap.get(rawItem.itemName));
+                        } else {
+                            // Add new item
+                            nextCart.push({
+                                id: Date.now() + Math.random(),
+                                itemName: rawItem.itemName,
+                                availableStock: rawItem.currentStock || 0,
+                                quantity: '',
+                                rate: '',
+                                hsnCode: rawItem.hsnCode || '7204',
+                                amount: 0,
+                                sourceContainers: [],
+                                isExpanded: false
+                            });
+                        }
+                    });
+
+                    return nextCart;
+                });
+
+                // Trigger stock fetch
+                incomingRaw.forEach(i => fetchStockForItem(i.itemName));
+            }
         }
     }, [location.state, masterItems]);
+
+    const handleAddMoreItems = () => {
+        navigate('/items-summary', {
+            state: {
+                existingCartItems: cartItems.map(i => i.itemName),
+                preservedInvoiceData: invoiceData
+            }
+        });
+    };
 
     const fetchInitialData = async () => {
         setLoading(true);
@@ -927,11 +956,18 @@ const SaleEntry = () => {
                             </div>
                         </div>
 
-                        {/* 2. Items Cart */}
                         <div className="space-y-3">
-                            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                                <FileText className="text-blue-600" size={20} /> Items to Sell
-                            </h3>
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <FileText className="text-blue-600" size={20} /> Items to Sell
+                                </h3>
+                                <button
+                                    onClick={handleAddMoreItems}
+                                    className="text-sm font-bold text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200 hover:border-blue-300 transition-all flex items-center gap-2"
+                                >
+                                    <Plus size={16} /> Add More
+                                </button>
+                            </div>
 
                             {cartItems.length === 0 ? (
                                 <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300">

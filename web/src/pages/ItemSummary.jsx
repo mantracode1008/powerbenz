@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { getContainers, createItem, getItems, getItemSummary, getAvailableContainers, api, updateContainerItem, updateItem, deleteItem } from '../services/api';
 import { formatDate } from '../utils/dateUtils';
 import { Download, FileText, Plus, X, Calendar, ChevronDown, RotateCcw, Eye, Edit2, Save, XCircle, Trash2 } from 'lucide-react';
@@ -53,6 +53,14 @@ const ItemSummary = () => {
     const [itemToDelete, setItemToDelete] = useState(null);
 
     const navigate = useNavigate();
+    const location = useLocation();
+
+    // Restore selection if adding more items
+    useEffect(() => {
+        if (location.state?.existingCartItems) {
+            setSelectedItems(new Set(location.state.existingCartItems));
+        }
+    }, [location.state]);
 
     const toggleSelection = (itemName, isChecked) => {
         const newSet = new Set(selectedItems);
@@ -71,7 +79,12 @@ const ItemSummary = () => {
             id: i._id || i.itemId
         }));
 
-        navigate('/sales', { state: { selectedItems: selectedData } });
+        navigate('/sales', {
+            state: {
+                selectedItems: selectedData,
+                preservedInvoiceData: location.state?.preservedInvoiceData
+            }
+        });
     };
 
     useEffect(() => {
