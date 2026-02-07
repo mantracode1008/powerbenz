@@ -144,7 +144,7 @@ const Dashboard = () => {
             </div>
 
             {/* Summary Cards */}
-            <div className={`grid grid-cols-1 md:grid-cols-2 ${canViewRates ? 'lg:grid-cols-5' : 'lg:grid-cols-3'} gap-6`}>
+            <div className={`grid grid-cols-1 md:grid-cols-2 ${canViewRates ? 'lg:grid-cols-3 xl:grid-cols-3' : 'lg:grid-cols-3'} gap-6`}>
                 {canViewRates && (
                     <StatCard
                         title="Total Purchase"
@@ -173,6 +173,23 @@ const Dashboard = () => {
                         onClick={() => {
                             if (isAdmin || user?.permissions?.includes('/summary')) {
                                 navigate('/summary', { state: { activeTab: 'sale' } });
+                            }
+                        }}
+                    />
+                )}
+
+                {canViewRates && (
+                    <StatCard
+                        title="Stock Value"
+                        value={cards.totalStockValue}
+                        isCurrency={true}
+                        icon={TrendingUp} /* Using TrendingUp again or maybe IndianRupee with different color? Let's stick to TrendingUp as 'Value' */
+                        color="bg-teal-500" // Teal for Stock Value
+                        iconColor="text-slate-800"
+                        subtext="Current Inventory Value"
+                        onClick={() => {
+                            if (isAdmin || user?.permissions?.includes('/summary')) {
+                                navigate('/summary', { state: { activeTab: 'item' } });
                             }
                         }}
                     />

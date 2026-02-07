@@ -15,7 +15,8 @@ router.get('/stats', async (req, res) => {
             totalAmount: 0,
             totalContainers: 0,
             totalWeight: 0,
-            totalSales: 0
+            totalSales: 0,
+            totalStockValue: 0
         },
         charts: {
             monthly: [],
@@ -58,8 +59,20 @@ router.get('/stats', async (req, res) => {
                 attributes: []
             }]
         });
-        const pTotalWeight = ContainerItem.sum('quantity');
+        const pTotalWeight = ContainerItem.sum('remainingQuantity');
         const pTotalSales = Sale.sum('totalAmount');
+
+        // NEW: Total Stock Value (Sum of remainingQuantity * rate)
+        // Note: Use simple accumulation if dialect issues, but SQL SUM is cleaner
+        const pTotalStockValue = ContainerItem.findAll({
+            attributes: [
+                [sequelize.literal('SUM(remainingQuantity * rate)'), 'totalValue']
+            ],
+            where: {
+                remainingQuantity: { [Op.gt]: 0.001 }
+            },
+            raw: true
+        });
 
         // --- CHARTS DATA FETCHING (Robust JS Grouping) ---
         // Fetch raw data arrays instead of grouping in DB to avoid dialect issues (sqlite vs pg dates)
@@ -172,7 +185,8 @@ router.get('/stats', async (req, res) => {
             allStockData,
             topBuyersData,
             topFirmsData,
-            totalBuyers
+            totalBuyers,
+            totalStockValueRes // Result for stock value
         ] = await Promise.all([
             runSafe(() => pTotalAmount, 0),
             runSafe(() => pTotalContainers, 0),
@@ -186,7 +200,8 @@ router.get('/stats', async (req, res) => {
             runSafe(() => pAllStock, []),
             runSafe(() => pTopBuyers, []),
             runSafe(() => pTopFirms, []),
-            runSafe(() => Sale.count({ distinct: true, col: 'buyerName' }), 0)
+            runSafe(() => Sale.count({ distinct: true, col: 'buyerName' }), 0),
+            runSafe(() => pTotalStockValue, [{ totalValue: 0 }])
         ]);
 
         // Process Results for Cards (Unchanged)
@@ -195,6 +210,7 @@ router.get('/stats', async (req, res) => {
         response.cards.totalWeight = totalWeight || 0;
         response.cards.totalSales = totalSales || 0;
         response.cards.totalBuyers = totalBuyers || 0;
+        response.cards.totalStockValue = totalStockValueRes && totalStockValueRes[0] ? (parseFloat(totalStockValueRes[0].totalValue) || 0) : 0; // Assign stock value
 
         // --- JS PROCESSING FOR CHARTS ---
 
@@ -304,6 +320,7 @@ router.get('/stats', async (req, res) => {
         if (!canViewRates) {
             response.cards.totalAmount = 0;
             response.cards.totalSales = 0;
+            response.cards.totalStockValue = 0;
 
             response.charts.monthly = response.charts.monthly.map(m => ({ ...m, Purchase: 0, Sales: 0 }));
             response.charts.daily = response.charts.daily.map(d => ({ ...d, Purchase: 0, Sales: 0 }));
@@ -320,7 +337,7 @@ router.get('/stats', async (req, res) => {
     } catch (error) {
         console.error('[Dashboard] CRITICAL ERROR:', error);
         res.status(200).json({
-            cards: { totalAmount: 0, totalContainers: 0, totalWeight: 0, totalSales: 0 },
+            cards: { totalAmount: 0, totalContainers: 0, totalWeight: 0, totalSales: 0, totalStockValue: 0 },
             charts: { monthly: [], daily: [], items: [], stock: [], salesByItem: [], distribution: [] }
         });
     }
