@@ -13,4 +13,5 @@ push_to_github.bat
 deploy.ps1
 fix_deploy.ps1
 vps_fix.sh
-vps_setup.sh
+vps_setup.sh.DS_Store
+node_modules
