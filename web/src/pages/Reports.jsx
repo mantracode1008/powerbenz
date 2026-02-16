@@ -35,6 +35,11 @@ const Reports = () => {
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showStockExportMenu, setShowStockExportMenu] = useState(false);
     const [kpiModal, setKpiModal] = useState(null); // { type: 'purchase'|'sales'|'stock', title: '', data: [] }
+    const [expandedDate, setExpandedDate] = useState(null);
+
+    const toggleDate = (date) => {
+        setExpandedDate(prev => prev === date ? null : date);
+    };
 
     useEffect(() => {
         const fetchData = async () => {
@@ -239,6 +244,48 @@ const Reports = () => {
             })
             .sort((a, b) => b.stock - a.stock);
     }, [filteredContainers, filteredSales]);
+
+    // Group Purchases by Date
+    const groupedPurchases = useMemo(() => {
+        const groups = {};
+        flattenedPurchases.forEach(p => {
+            const dateKey = toLocalISO(p.date);
+            if (!groups[dateKey]) {
+                groups[dateKey] = {
+                    date: p.date,
+                    dateKey: dateKey,
+                    items: [],
+                    totalWeight: 0,
+                    totalAmount: 0
+                };
+            }
+            groups[dateKey].items.push(p);
+            groups[dateKey].totalWeight += p.itemQuantity;
+            groups[dateKey].totalAmount += p.itemAmount;
+        });
+        return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
+    }, [flattenedPurchases]);
+
+    // Group Sales by Date
+    const groupedSales = useMemo(() => {
+        const groups = {};
+        filteredSales.forEach(s => {
+            const dateKey = toLocalISO(s.date);
+            if (!groups[dateKey]) {
+                groups[dateKey] = {
+                    date: s.date,
+                    dateKey: dateKey,
+                    items: [],
+                    totalWeight: 0,
+                    totalAmount: 0
+                };
+            }
+            groups[dateKey].items.push(s);
+            groups[dateKey].totalWeight += parseFloat(s.quantity) || 0;
+            groups[dateKey].totalAmount += parseFloat(s.totalAmount) || 0;
+        });
+        return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
+    }, [filteredSales]);
 
     const exportToExcel = () => {
         const wb = XLSX.utils.book_new();
@@ -956,136 +1003,189 @@ const Reports = () => {
             )}
 
             {activeTab === 'purchases' && (
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+                <div className="space-y-4">
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex justify-between items-center">
                         <h3 className="font-bold text-slate-800">Purchase History</h3>
-                        <span className="text-xs font-mono bg-slate-100 px-2 py-1 rounded text-slate-600">{flattenedPurchases.length} Items</span>
+                        <div className="text-right">
+                            <div className="text-sm font-bold text-slate-700">Total Purchase</div>
+                            <div className="text-xs text-slate-500">
+                                {metrics.purchaseWeight.toFixed(2)} kg • {metrics.purchaseAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}
+                            </div>
+                        </div>
                     </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
-                                <tr>
-                                    <th className="px-4 py-3">Date</th>
-                                    <th className="px-4 py-3">Container No</th>
-                                    <th className="px-4 py-3">Firm</th>
-                                    <th className="px-4 py-3">Item Name</th>
-                                    <th className="px-4 py-3 text-right">Assortment Wgt</th>
-                                    <th className="px-4 py-3 text-right">Net Weight (kg)</th>
-                                    <th className="px-4 py-3 text-right">Amount (₹)</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {flattenedPurchases.map((p, i) => {
-                                    const isSameContainer = i > 0 && flattenedPurchases[i - 1].id === p.id;
+
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        {groupedPurchases.length === 0 ? (
+                            <div className="p-8 text-center text-slate-400">No purchases found in this range</div>
+                        ) : (
+                            <div className="divide-y divide-slate-100">
+                                {groupedPurchases.map((group) => {
+                                    const isExpanded = expandedDate === group.dateKey;
                                     return (
-                                        <tr key={i} className={`hover:bg-slate-50 transition-colors ${!isSameContainer ? 'border-t-2 border-slate-200' : 'border-none'}`}>
-                                            <td className="px-4 py-3 align-top whitespace-nowrap">
-                                                {!isSameContainer && <span className="font-medium text-slate-800">{formatDate(p.date)}</span>}
-                                            </td>
-                                            <td className="px-4 py-3 align-top font-bold text-slate-700">
-                                                {!isSameContainer && p.containerNo}
-                                            </td>
-                                            <td className="px-4 py-3 align-top">
-                                                {!isSameContainer && p.firm}
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-600 border-l border-slate-100 pl-4">
-                                                {p.itemName}
-                                            </td>
-                                            <td className="px-4 py-3 text-right font-mono text-slate-400">
-                                                {/* Show Assortment only once per container */}
-                                                {!isSameContainer && p.assortmentWeight ? parseFloat(p.assortmentWeight).toFixed(2) : ''}
-                                            </td>
-                                            <td className="px-4 py-3 text-right font-mono font-bold text-slate-700">
-                                                {p.itemQuantity.toFixed(2)}
-                                            </td>
-                                            <td className="px-4 py-3 text-right font-mono">
-                                                {p.itemAmount.toLocaleString('en-IN')}
-                                            </td>
-                                        </tr>
+                                        <div key={group.dateKey} className="bg-white">
+                                            {/* Date Header Summary */}
+                                            <div
+                                                onClick={() => toggleDate(group.dateKey)}
+                                                className={`p-4 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors ${isExpanded ? 'bg-slate-50' : ''}`}
+                                            >
+                                                <div className="flex items-center gap-4">
+                                                    <div className={`p-1.5 rounded-full transition-transform duration-200 ${isExpanded ? 'bg-blue-100 text-blue-600 rotate-90' : 'bg-slate-100 text-slate-400'}`}>
+                                                        <ArrowUpRight size={16} className={isExpanded ? "" : "rotate-45"} />
+                                                    </div>
+                                                    <div>
+                                                        <h4 className="font-bold text-slate-800">{formatDate(group.date)}</h4>
+                                                        <p className="text-xs text-slate-500">{group.items.length} Items</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="font-mono font-bold text-slate-700">{group.totalWeight.toFixed(2)} <span className="text-xs text-slate-400 font-sans">kg</span></div>
+                                                    <div className="text-xs font-mono text-emerald-600">{group.totalAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}</div>
+                                                </div>
+                                            </div>
+
+                                            {/* Expanded Details */}
+                                            {isExpanded && (
+                                                <div className="border-t border-slate-100 bg-slate-50/50 p-2 sm:p-4 animate-in slide-in-from-top-2">
+                                                    <div className="overflow-x-auto rounded-lg border border-slate-200 shadow-sm bg-white">
+                                                        <table className="w-full text-sm text-left">
+                                                            <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+                                                                <tr>
+                                                                    <th className="px-4 py-3">Container No</th>
+                                                                    <th className="px-4 py-3">Firm</th>
+                                                                    <th className="px-4 py-3">Item Name</th>
+                                                                    <th className="px-4 py-3 text-right">Assortment</th>
+                                                                    <th className="px-4 py-3 text-right">Net Weight</th>
+                                                                    <th className="px-4 py-3 text-right">Amount</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-slate-100">
+                                                                {group.items.map((p, i) => {
+                                                                    const isSameContainer = i > 0 && group.items[i - 1].id === p.id;
+                                                                    return (
+                                                                        <tr key={i} className={`hover:bg-slate-50 ${!isSameContainer ? 'border-t border-slate-100' : ''}`}>
+                                                                            <td className="px-4 py-2 align-top font-bold text-slate-700 text-xs">
+                                                                                {!isSameContainer && p.containerNo}
+                                                                            </td>
+                                                                            <td className="px-4 py-2 align-top text-xs text-slate-600">
+                                                                                {!isSameContainer && p.firm}
+                                                                            </td>
+                                                                            <td className="px-4 py-2 text-slate-700 pl-4 border-l border-slate-100">
+                                                                                {p.itemName}
+                                                                            </td>
+                                                                            <td className="px-4 py-2 text-right font-mono text-slate-400 text-xs">
+                                                                                {!isSameContainer && p.assortmentWeight ? parseFloat(p.assortmentWeight).toFixed(2) : ''}
+                                                                            </td>
+                                                                            <td className="px-4 py-2 text-right font-mono font-bold text-slate-700">
+                                                                                {p.itemQuantity.toFixed(2)}
+                                                                            </td>
+                                                                            <td className="px-4 py-2 text-right font-mono text-slate-600">
+                                                                                {p.itemAmount.toLocaleString('en-IN')}
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
                                     );
                                 })}
-                                {flattenedPurchases.length === 0 && (
-                                    <tr>
-                                        <td colSpan="7" className="px-4 py-8 text-center text-slate-400">No purchases found in this range</td>
-                                    </tr>
-                                )}
-                            </tbody>
-                            <tfoot className="bg-slate-100 border-t-2 border-slate-200 font-bold text-slate-700 sticky bottom-0">
-                                <tr>
-                                    <td colSpan={5} className="px-4 py-4 text-right uppercase text-xs tracking-wider">Total</td>
-                                    <td className="px-4 py-4 text-right font-mono text-blue-700 text-base">
-                                        {metrics.purchaseWeight.toFixed(2)} <span className="text-[10px] text-slate-500 font-sans">kg</span>
-                                    </td>
-                                    <td className="px-4 py-4 text-right font-mono text-emerald-700 text-base">
-                                        {metrics.purchaseAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}
-                                    </td>
-                                </tr>
-                            </tfoot>
-                        </table>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
 
             {activeTab === 'sales' && (
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+                <div className="space-y-4">
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex justify-between items-center">
                         <h3 className="font-bold text-slate-800">Sales History</h3>
-                        <span className="text-xs font-mono bg-slate-100 px-2 py-1 rounded text-slate-600">{filteredSales.length} Records</span>
+                        <div className="text-right">
+                            <div className="text-sm font-bold text-slate-700">Total Sales</div>
+                            <div className="text-xs text-slate-500">
+                                {metrics.saleWeight.toFixed(2)} kg • {metrics.saleAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}
+                            </div>
+                        </div>
                     </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
-                                <tr>
-                                    <th className="px-4 py-3">Date</th>
-                                    <th className="px-4 py-3">Invoice No</th>
-                                    <th className="px-4 py-3">Buyer Name</th>
-                                    <th className="px-4 py-3">Item Name</th> {/* Added Header */}
-                                    <th className="px-4 py-3 text-right">Weight (kg)</th>
-                                    <th className="px-4 py-3 text-right">Amount (₹)</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {filteredSales.map((s, i) => {
-                                    // Check if Previous Item belongs to same Invoice
-                                    const isSameInvoice = i > 0 && filteredSales[i - 1].invoiceNo === s.invoiceNo;
 
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        {groupedSales.length === 0 ? (
+                            <div className="p-8 text-center text-slate-400">No sales found in this range</div>
+                        ) : (
+                            <div className="divide-y divide-slate-100">
+                                {groupedSales.map((group) => {
+                                    const isExpanded = expandedDate === group.dateKey;
                                     return (
-                                        <tr key={i} className={`hover:bg-slate-50 transition-colors ${!isSameInvoice ? 'border-t-2 border-slate-200' : 'border-none'}`}>
-                                            <td className="px-4 py-3 align-top whitespace-nowrap">
-                                                {!isSameInvoice && <span className="font-medium text-slate-800">{formatDate(s.date)}</span>}
-                                            </td>
-                                            <td className="px-4 py-3 align-top font-bold text-slate-700">
-                                                {!isSameInvoice && s.invoiceNo}
-                                            </td>
-                                            <td className="px-4 py-3 align-top font-medium text-slate-700">
-                                                {!isSameInvoice && s.buyerName}
-                                            </td>
-                                            <td className="px-4 py-3 text-slate-600 border-l border-slate-100 pl-4">{s.itemName || 'Unknown'}</td>
-                                            <td className="px-4 py-3 text-right font-mono">{parseFloat(s.quantity).toFixed(2)}</td>
-                                            <td className="px-4 py-3 text-right font-mono">{parseFloat(s.totalAmount).toLocaleString('en-IN')}</td>
-                                        </tr>
+                                        <div key={group.dateKey} className="bg-white">
+                                            {/* Date Header Summary */}
+                                            <div
+                                                onClick={() => toggleDate(group.dateKey)}
+                                                className={`p-4 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors ${isExpanded ? 'bg-slate-50' : ''}`}
+                                            >
+                                                <div className="flex items-center gap-4">
+                                                    <div className={`p-1.5 rounded-full transition-transform duration-200 ${isExpanded ? 'bg-emerald-100 text-emerald-600 rotate-90' : 'bg-slate-100 text-slate-400'}`}>
+                                                        <ArrowUpRight size={16} className={isExpanded ? "" : "rotate-45"} />
+                                                    </div>
+                                                    <div>
+                                                        <h4 className="font-bold text-slate-800">{formatDate(group.date)}</h4>
+                                                        <p className="text-xs text-slate-500">{group.items.length} Records</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <div className="font-mono font-bold text-slate-700">{group.totalWeight.toFixed(2)} <span className="text-xs text-slate-400 font-sans">kg</span></div>
+                                                    <div className="text-xs font-mono text-emerald-600">{group.totalAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}</div>
+                                                </div>
+                                            </div>
+
+                                            {/* Expanded Details */}
+                                            {isExpanded && (
+                                                <div className="border-t border-slate-100 bg-slate-50/50 p-2 sm:p-4 animate-in slide-in-from-top-2">
+                                                    <div className="overflow-x-auto rounded-lg border border-slate-200 shadow-sm bg-white">
+                                                        <table className="w-full text-sm text-left">
+                                                            <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+                                                                <tr>
+                                                                    <th className="px-4 py-3">Invoice No</th>
+                                                                    <th className="px-4 py-3">Buyer Name</th>
+                                                                    <th className="px-4 py-3">Item Name</th>
+                                                                    <th className="px-4 py-3 text-right">Weight</th>
+                                                                    <th className="px-4 py-3 text-right">Amount</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-slate-100">
+                                                                {group.items.map((s, i) => {
+                                                                    const isSameInvoice = i > 0 && group.items[i - 1].invoiceNo === s.invoiceNo;
+                                                                    return (
+                                                                        <tr key={i} className={`hover:bg-slate-50 ${!isSameInvoice ? 'border-t border-slate-100' : ''}`}>
+                                                                            <td className="px-4 py-2 align-top font-bold text-slate-700 text-xs">
+                                                                                {!isSameInvoice && s.invoiceNo}
+                                                                            </td>
+                                                                            <td className="px-4 py-2 align-top text-xs text-slate-600 font-medium">
+                                                                                {!isSameInvoice && s.buyerName}
+                                                                            </td>
+                                                                            <td className="px-4 py-2 text-slate-700 pl-4 border-l border-slate-100">
+                                                                                {s.itemName || 'Unknown'}
+                                                                            </td>
+                                                                            <td className="px-4 py-2 text-right font-mono font-bold text-slate-700">
+                                                                                {parseFloat(s.quantity).toFixed(2)}
+                                                                            </td>
+                                                                            <td className="px-4 py-2 text-right font-mono text-slate-600">
+                                                                                {parseFloat(s.totalAmount).toLocaleString('en-IN')}
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
                                     );
                                 })}
-                                {filteredSales.length === 0 && (
-                                    <tr>
-                                        <td colSpan="6" className="px-4 py-8 text-center text-slate-400">No sales found in this range</td> {/* Increased ColSpan */}
-                                    </tr>
-                                )}
-                            </tbody>
-                            {filteredSales.length > 0 && (
-                                <tfoot className="bg-slate-100 border-t-2 border-slate-200 font-bold text-slate-700 sticky bottom-0">
-                                    <tr>
-                                        <td colSpan={4} className="px-4 py-4 text-right uppercase text-xs tracking-wider">Total</td> {/* Increased ColSpan */}
-                                        <td className="px-4 py-4 text-right font-mono text-blue-700 text-base">
-                                            {metrics.saleWeight.toFixed(2)} <span className="text-[10px] text-slate-500 font-sans">kg</span>
-                                        </td>
-                                        <td className="px-4 py-4 text-right font-mono text-emerald-700 text-base">
-                                            {metrics.saleAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}
-                                        </td>
-                                    </tr>
-                                </tfoot>
-                            )}
-                        </table>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

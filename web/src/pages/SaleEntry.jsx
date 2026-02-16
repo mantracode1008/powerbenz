@@ -570,9 +570,8 @@ const SaleEntry = () => {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9);
         doc.setTextColor(...TEXT_COLOR);
-        doc.text("Plot 123, Industrial Est.", 14, 70);
-        doc.text("Ahmedabad, GJ 380001", 14, 75);
-        doc.text("contact@powerbenz.com", 14, 80);
+        doc.text("Surat, GJ 394150", 14, 75);
+        doc.text("info@powerbenz.com", 14, 80);
 
 
 
@@ -581,7 +580,7 @@ const SaleEntry = () => {
         doc.setFontSize(32);
         doc.setTextColor(...LIGHT_GRAY);
         doc.setTextColor(200, 200, 200);
-        doc.text("INVOICE", 196, 25, { align: "right" });
+        doc.text("ESTIMATE", 196, 25, { align: "right" });
 
         doc.setTextColor(...PRIMARY_COLOR);
         doc.setFontSize(14);
@@ -638,7 +637,6 @@ const SaleEntry = () => {
         const tableRows = data.items.map((item, i) => [
             { content: (i + 1).toString(), styles: { halign: 'center' } },
             { content: item.itemName, styles: { fontStyle: 'bold' } },
-            { content: item.hsnCode || '-', styles: { halign: 'center' } },
             { content: parseFloat(item.quantity).toLocaleString('en-IN') + ' kg', styles: { halign: 'right' } },
             { content: parseFloat(item.rate).toFixed(2), styles: { halign: 'right' } },
             { content: (parseFloat(item.quantity) * parseFloat(item.rate)).toLocaleString('en-IN', { minimumFractionDigits: 2 }), styles: { halign: 'right' } }
@@ -646,7 +644,7 @@ const SaleEntry = () => {
 
         autoTable(doc, {
             startY: tableY,
-            head: [['#', 'ITEM DESCRIPTION', 'HSN', 'QUANTITY', 'RATE', 'AMOUNT']],
+            head: [['SrNo', 'Product Name', 'QTY', 'RATE', 'AMOUNT']],
             body: tableRows,
             theme: 'grid',
             headStyles: {
@@ -668,9 +666,8 @@ const SaleEntry = () => {
             },
             columnStyles: {
                 0: { cellWidth: 10 },
-                1: { cellWidth: 70 }, // Desc
-                2: { cellWidth: 25 }, // HSN
-                5: { fontStyle: 'bold', textColor: PRIMARY_COLOR }
+                1: { cellWidth: 90 }, // Desc Increased
+                4: { fontStyle: 'bold', textColor: PRIMARY_COLOR }
             },
             margin: { left: 14, right: 14 }
         });
@@ -695,7 +692,7 @@ const SaleEntry = () => {
         doc.setTextColor(...TEXT_COLOR);
         doc.setFont("helvetica", "normal");
         doc.text("1. Interest @18% p.a. will be charged for delayed payment.", 20, finalY + 14);
-        doc.text("2. Subject to Ahmedabad Jurisdiction.", 20, finalY + 19);
+        doc.text("2. Subject to Surat Jurisdiction.", 20, finalY + 19);
 
         // -- Totals (Right) --
         const rightX = 130;
@@ -716,7 +713,7 @@ const SaleEntry = () => {
 
         // Divider
         doc.setDrawColor(200);
-        doc.line(rightX, currY - 2, valX, currY - 2);
+        doc.line(rightX, currY - 5, valX, currY - 5);
 
         drawTotalRow("Grand Total", `Rs. ${totalAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, true);
 
@@ -724,8 +721,8 @@ const SaleEntry = () => {
         const signY = finalY + 25;
         doc.setFontSize(9);
         doc.setTextColor(...TEXT_COLOR);
-        doc.text("For, Power Benz Industries Pvt. Ltd.", 196, signY, { align: "right" });
-        doc.text("Authorized Signatory", 196, signY + 20, { align: "right" });
+        // doc.text("For, Power Benz Industries Pvt. Ltd.", 196, signY, { align: "right" });
+        // doc.text("Authorized Signatory", 196, signY + 20, { align: "right" });
 
         // 8. Bottom Footer
         const pageHeight = doc.internal.pageSize.height;
