@@ -33,8 +33,10 @@ const SaleEntry = () => {
         date: new Date().toISOString().split('T')[0],
         buyerName: '',
         invoiceNo: '',
+        invoiceNo: '',
         hsnCode: '7204',
-        broker: '' // Previously 'remarks'
+        broker: '', // Previously 'remarks'
+        roundOff: 0 // New field for adjustment
     });
 
     // CART STATE (List of Items to Sell)
@@ -286,7 +288,9 @@ const SaleEntry = () => {
                 date: invoiceData.date,
                 buyerName: invoiceData.buyerName,
                 invoiceNo: invoiceData.invoiceNo,
+                invoiceNo: invoiceData.invoiceNo,
                 remarks: invoiceData.broker, // Mapping Broker -> Remarks
+                roundOff: invoiceData.roundOff, // Add to payload
                 items: cartItems.map(item => ({
                     itemName: item.itemName,
                     quantity: item.quantity,
@@ -308,8 +312,10 @@ const SaleEntry = () => {
                     itemName: item.itemName,
                     quantity: item.quantity,
                     rate: item.rate,
+                    rate: item.rate,
                     hsnCode: item.hsnCode,
-                    sourceContainers: item.sourceContainers
+                    sourceContainers: item.sourceContainers,
+                    roundOff: payload.roundOff // Add to params
                 };
                 await updateSale(editingId, updatePayload);
                 setSuccessData({ title: 'Invoice Updated!', type: 'update', ...payload });
@@ -344,8 +350,10 @@ const SaleEntry = () => {
             date: isoDate,
             buyerName: sale.buyerName,
             invoiceNo: sale.invoiceNo,
+            invoiceNo: sale.invoiceNo,
             hsnCode: sale.hsnCode || '7204',
-            broker: sale.remarks || ''
+            broker: sale.remarks || '',
+            roundOff: sale.roundOff || 0 // Restore from saved Data
         });
 
         const editingItem = {
@@ -497,6 +505,13 @@ const SaleEntry = () => {
 
         XLSX.utils.book_append_sheet(wb, ws, "Sales History");
         XLSX.writeFile(wb, `Sales_Export_${historyFilter}${historyFilter === 'month' ? '_' + selectedMonth : ''}.xlsx`);
+    };
+
+    const handleRoundOffChange = (val) => {
+        setInvoiceData(prev => ({
+            ...prev,
+            roundOff: parseFloat(val) || 0
+        }));
     };
 
     const handleDelete = (id) => {
@@ -709,13 +724,21 @@ const SaleEntry = () => {
         };
 
         drawTotalRow("Total Quantity", `${totalQty.toLocaleString()} kg`);
+
+        // Subtotal (Raw Amount)
         drawTotalRow("Subtotal", `Rs. ${totalAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`);
+
+        // Round Off Row (if exists)
+        if (data.roundOff && parseFloat(data.roundOff) !== 0) {
+            drawTotalRow("Round Off", `Rs. ${parseFloat(data.roundOff).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`);
+        }
 
         // Divider
         doc.setDrawColor(200);
         doc.line(rightX, currY - 5, valX, currY - 5);
 
-        drawTotalRow("Grand Total", `Rs. ${totalAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, true);
+        // Grand Total (Final Amount)
+        drawTotalRow("Grand Total", `Rs. ${(totalAmt + (parseFloat(data.roundOff) || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, true);
 
         // 7. Signatory
         const signY = finalY + 25;
@@ -754,7 +777,9 @@ const SaleEntry = () => {
             invoiceNo: sale.invoiceNo,
             date: sale.date,
             buyerName: sale.buyerName,
+            buyerName: sale.buyerName,
             remarks: sale.remarks,
+            roundOff: sale.roundOff || 0, // Pass specific roundOff
             items: invoiceItems.map(i => ({
                 itemName: i.itemName,
                 hsnCode: i.hsnCode, // Assuming this exists or we default
@@ -823,7 +848,7 @@ const SaleEntry = () => {
                                 <div className="flex justify-between items-center">
                                     <span className="text-slate-400 font-bold uppercase text-xs tracking-wider">Amount</span>
                                     <span className="font-black text-lg text-emerald-600">
-                                        {(successData.items || []).reduce((sum, item) => sum + (parseFloat(item.quantity || 0) * parseFloat(item.rate || 0)), 0).toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
+                                        {((successData.items || []).reduce((sum, item) => sum + (parseFloat(item.quantity || 0) * parseFloat(item.rate || 0)), 0) + (parseFloat(successData.roundOff) || 0)).toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
                                     </span>
                                 </div>
                             </div>
@@ -940,16 +965,15 @@ const SaleEntry = () => {
                                         icon={Hash}
                                     />
                                 </div>
-                                <div className="relative">
-                                    <StringCombo
-                                        label="Broker Name"
-                                        value={invoiceData.broker}
-                                        onChange={(v) => setInvoiceData({ ...invoiceData, broker: v })}
-                                        fetchOptions={(p) => fetchOptions('broker', p.search)}
-                                        placeholder="Select Broker"
-                                        icon={User}
-                                    />
-                                </div>
+                                <StringCombo
+                                    label="Broker Name"
+                                    value={invoiceData.broker}
+                                    onChange={(v) => setInvoiceData({ ...invoiceData, broker: v })}
+                                    fetchOptions={(p) => fetchOptions('broker', p.search)}
+                                    placeholder="Select Broker"
+                                    icon={User}
+                                />
+
                             </div>
                         </div>
 
@@ -1084,36 +1108,50 @@ const SaleEntry = () => {
                                     </div>
                                 ))
                             )}
+
+
                         </div>
 
                         {/* 3. Footer Totals */}
-                        {cartItems.length > 0 && (
-                            <div className="sticky bottom-0 z-30 bg-white/90 backdrop-blur-md border-t border-slate-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] flex flex-col md:flex-row justify-between items-center animate-in slide-in-from-bottom-5">
-                                <div className="flex gap-8 text-sm">
-                                    <div>
-                                        <span className="text-slate-500 block text-xs uppercase tracking-wider font-bold">Total Weight</span>
-                                        <span className="font-bold text-xl text-slate-800">{grandTotalQty.toLocaleString()} kg</span>
+                        {
+                            cartItems.length > 0 && (
+                                <div className="sticky bottom-0 z-30 bg-white/90 backdrop-blur-md border-t border-slate-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] flex flex-col md:flex-row justify-between items-center animate-in slide-in-from-bottom-5">
+                                    <div className="flex gap-8 text-sm">
+                                        <div>
+                                            <span className="text-slate-500 block text-xs uppercase tracking-wider font-bold">Total Weight</span>
+                                            <span className="font-bold text-xl text-slate-800">{grandTotalQty.toLocaleString()} kg</span>
+                                        </div>
+                                        <div>
+                                            <span className="text-slate-500 block text-xs uppercase tracking-wider font-bold">Items</span>
+                                            <span className="font-bold text-xl text-slate-800">{cartItems.length}</span>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <span className="text-slate-500 block text-xs uppercase tracking-wider font-bold">Items</span>
-                                        <span className="font-bold text-xl text-slate-800">{cartItems.length}</span>
+                                    <div className="flex items-center gap-6 mt-4 md:mt-0">
+                                        <div className="flex flex-col items-end gap-1">
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Round Off</label>
+                                            <input
+                                                type="number"
+                                                placeholder="0.00"
+                                                className="w-24 text-right font-bold text-slate-600 border border-slate-200 rounded px-2 py-1 outline-none focus:border-blue-500 text-sm bg-slate-50 focus:bg-white transition-all"
+                                                value={invoiceData.roundOff || ''}
+                                                onChange={(e) => handleRoundOffChange(e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-slate-500 block text-xs uppercase tracking-wider font-bold">Net Payable</span>
+                                            <span className="font-bold text-2xl text-emerald-700">{(grandTotalAmt + (parseFloat(invoiceData.roundOff) || 0)).toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}</span>
+                                        </div>
+                                        <button
+                                            onClick={handleSaveInvoice}
+                                            className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-bold shadow-lg shadow-blue-600/20 transition-all active:scale-95 flex items-center gap-2"
+                                        >
+                                            <CheckCircle size={18} />
+                                            {editingId ? 'Update Invoice' : 'Save Invoice'}
+                                        </button>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-6 mt-4 md:mt-0">
-                                    <div className="text-right">
-                                        <span className="text-slate-500 block text-xs uppercase tracking-wider font-bold">Total Amount</span>
-                                        <span className="font-bold text-2xl text-emerald-700">{grandTotalAmt.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}</span>
-                                    </div>
-                                    <button
-                                        onClick={handleSaveInvoice}
-                                        className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-bold shadow-lg shadow-blue-600/20 transition-all active:scale-95 flex items-center gap-2"
-                                    >
-                                        <CheckCircle size={18} />
-                                        {editingId ? 'Update Invoice' : 'Save Invoice'}
-                                    </button>
-                                </div>
-                            </div>
-                        )}
+                            )
+                        }
                     </div>
                 );
 
@@ -1153,172 +1191,174 @@ const SaleEntry = () => {
                     </>
                 );
             })()}{/* === TAB 2: HISTORY === */}
-            {activeTab === 'history' && (
-                <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
-                    {/* Filters Toolbar */}
-                    <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-center gap-4 animate-in slide-in-from-top-2">
+            {
+                activeTab === 'history' && (
+                    <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
+                        {/* Filters Toolbar */}
+                        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-center gap-4 animate-in slide-in-from-top-2">
 
-                        {/* Title & Type Selector */}
-                        <div className="flex items-center gap-4 w-full xl:w-auto">
-                            <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl hidden md:block">
-                                <History size={24} />
-                            </div>
-                            <div>
-                                <h2 className="text-lg font-black text-slate-800 tracking-tight">Transaction History</h2>
-                                <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 mt-1 w-fit">
-                                    {['month', 'range'].map((type) => (
-                                        <button
-                                            key={type}
-                                            onClick={() => setHistoryFilter(type)}
-                                            className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-all duration-200 ${historyFilter === type
-                                                ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-black/5'
-                                                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
-                                                }`}
-                                        >
-                                            {type === 'range' ? 'Date Range' : type}
-                                        </button>
-                                    ))}
+                            {/* Title & Type Selector */}
+                            <div className="flex items-center gap-4 w-full xl:w-auto">
+                                <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl hidden md:block">
+                                    <History size={24} />
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-black text-slate-800 tracking-tight">Transaction History</h2>
+                                    <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 mt-1 w-fit">
+                                        {['month', 'range'].map((type) => (
+                                            <button
+                                                key={type}
+                                                onClick={() => setHistoryFilter(type)}
+                                                className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider transition-all duration-200 ${historyFilter === type
+                                                    ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-black/5'
+                                                    : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                                                    }`}
+                                            >
+                                                {type === 'range' ? 'Date Range' : type}
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        {/* Controls */}
-                        <div className="flex flex-col md:flex-row items-center gap-3 w-full xl:w-auto">
-                            {/* Date Picker */}
-                            <div className="w-full md:w-auto min-w-[200px]">
-                                {historyFilter === 'month' ? (
-                                    <div className="relative group">
-                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                                            <Calendar size={16} />
+                            {/* Controls */}
+                            <div className="flex flex-col md:flex-row items-center gap-3 w-full xl:w-auto">
+                                {/* Date Picker */}
+                                <div className="w-full md:w-auto min-w-[200px]">
+                                    {historyFilter === 'month' ? (
+                                        <div className="relative group">
+                                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                                <Calendar size={16} />
+                                            </div>
+                                            <CustomDatePicker
+                                                onChange={(e) => setSelectedMonth(e.target.value.slice(0, 7))}
+                                                value={`${selectedMonth}-01`}
+                                                dateFormat="MMMM yyyy"
+                                                showMonthYearPicker
+                                                className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all shadow-sm hover:border-indigo-300"
+                                            />
                                         </div>
-                                        <CustomDatePicker
-                                            onChange={(e) => setSelectedMonth(e.target.value.slice(0, 7))}
-                                            value={`${selectedMonth}-01`}
-                                            dateFormat="MMMM yyyy"
-                                            showMonthYearPicker
-                                            className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all shadow-sm hover:border-indigo-300"
-                                        />
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1.5 shadow-sm hover:border-indigo-300 transition-colors">
-                                        <CustomDatePicker
-                                            onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-                                            value={dateRange.start}
-                                            placeholder="Start"
-                                            className="w-24 text-xs font-semibold text-slate-700 border-none outline-none bg-transparent text-center"
-                                        />
-                                        <span className="text-slate-300">→</span>
-                                        <CustomDatePicker
-                                            onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-                                            value={dateRange.end}
-                                            placeholder="End"
-                                            className="w-24 text-xs font-semibold text-slate-700 border-none outline-none bg-transparent text-center"
-                                        />
-                                    </div>
-                                )}
+                                    ) : (
+                                        <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1.5 shadow-sm hover:border-indigo-300 transition-colors">
+                                            <CustomDatePicker
+                                                onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                                                value={dateRange.start}
+                                                placeholder="Start"
+                                                className="w-24 text-xs font-semibold text-slate-700 border-none outline-none bg-transparent text-center"
+                                            />
+                                            <span className="text-slate-300">→</span>
+                                            <CustomDatePicker
+                                                onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                                                value={dateRange.end}
+                                                placeholder="End"
+                                                className="w-24 text-xs font-semibold text-slate-700 border-none outline-none bg-transparent text-center"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Search */}
+                                <div className="relative w-full md:w-auto">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                    <input
+                                        type="text"
+                                        placeholder="Search Invoice..."
+                                        className="w-full md:w-64 pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all shadow-sm focus:border-indigo-500"
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                    />
+                                </div>
+
+                                <div className="hidden md:block w-px h-8 bg-slate-200 mx-1"></div>
+
+                                {/* Export */}
+                                <button
+                                    onClick={handleExportExcel}
+                                    className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold shadow-sm hover:bg-slate-50 text-slate-600 transition-all active:translate-y-0.5 whitespace-nowrap"
+                                >
+                                    <FileText size={16} className="text-green-600" />
+                                    <span className="hidden sm:inline">Export</span>
+                                </button>
                             </div>
+                        </div>
 
-                            {/* Search */}
-                            <div className="relative w-full md:w-auto">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                                <input
-                                    type="text"
-                                    placeholder="Search Invoice..."
-                                    className="w-full md:w-64 pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all shadow-sm focus:border-indigo-500"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
-                            </div>
+                        {/* Table */}
+                        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                            <table className="w-full text-sm text-left">
+                                <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase">
+                                    <tr>
+                                        <th className="px-6 py-4">Date</th>
+                                        <th className="px-6 py-4">Invoice</th>
+                                        <th className="px-6 py-4">Buyer</th>
+                                        <th className="px-6 py-4">Broker</th>
+                                        <th className="px-6 py-4">Container</th>
+                                        <th className="px-6 py-4">Item</th>
+                                        <th className="px-6 py-4 text-right">Qty</th>
+                                        <th className="px-6 py-4 text-right">Rate</th>
+                                        <th className="px-6 py-4 text-right">Amount</th>
+                                        <th className="px-6 py-4 text-center">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {getFilteredHistory().map((sale, i, arr) => {
+                                        // Check if Previous Item belongs to same Invoice
+                                        const isSameInvoice = i > 0 && arr[i - 1].invoiceNo === sale.invoiceNo;
 
-                            <div className="hidden md:block w-px h-8 bg-slate-200 mx-1"></div>
-
-                            {/* Export */}
-                            <button
-                                onClick={handleExportExcel}
-                                className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold shadow-sm hover:bg-slate-50 text-slate-600 transition-all active:translate-y-0.5 whitespace-nowrap"
-                            >
-                                <FileText size={16} className="text-green-600" />
-                                <span className="hidden sm:inline">Export</span>
-                            </button>
+                                        return (
+                                            <tr key={i} className={`hover:bg-slate-50/80 transition-colors ${!isSameInvoice ? 'border-t-2 border-slate-200' : 'border-t border-slate-100'}`}>
+                                                <td className="px-6 py-3 font-mono text-slate-500 whitespace-nowrap">
+                                                    {!isSameInvoice && formatDate(sale.date)}
+                                                </td>
+                                                <td className="px-6 py-3 font-medium text-slate-800">
+                                                    {!isSameInvoice && sale.invoiceNo}
+                                                </td>
+                                                <td className="px-6 py-3 text-slate-600">
+                                                    {!isSameInvoice && sale.buyerName}
+                                                </td>
+                                                <td className="px-6 py-3 text-slate-500 italic">
+                                                    {!isSameInvoice && (sale.remarks || '-')}
+                                                </td>
+                                                <td className="px-6 py-3 text-slate-600 text-xs">{getContainerInfo(sale)}</td>
+                                                <td className="px-6 py-3 font-medium text-blue-600">{sale.itemName}</td>
+                                                <td className="px-6 py-3 text-right font-bold text-slate-700">{parseFloat(sale.quantity).toLocaleString()}</td>
+                                                <td className="px-6 py-3 text-right text-slate-500">{parseFloat(sale.rate).toFixed(2)}</td>
+                                                <td className="px-6 py-3 text-right font-bold text-emerald-600">{parseFloat(sale.totalAmount).toLocaleString()}</td>
+                                                <td className="px-6 py-3 text-center flex items-center justify-center gap-2">
+                                                    <button
+                                                        onClick={() => handleDownloadHistoryInvoice(sale)}
+                                                        className="text-slate-400 hover:text-green-600 transition-colors p-2 rounded-full hover:bg-green-50"
+                                                        title="Download Invoice"
+                                                    >
+                                                        <Download size={16} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleEdit(sale)}
+                                                        className="text-slate-400 hover:text-blue-600 transition-colors p-2 rounded-full hover:bg-blue-50"
+                                                        title="Edit Sale"
+                                                    >
+                                                        <Pencil size={16} />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDelete(sale._id || sale.id)}
+                                                        className="text-slate-400 hover:text-red-600 transition-colors p-2 rounded-full hover:bg-red-50"
+                                                        title="Delete Sale"
+                                                    >
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                    {getFilteredHistory().length === 0 && (
+                                        <tr><td colSpan={10} className="text-center py-12 text-slate-400">No records found</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
-
-                    {/* Table */}
-                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase">
-                                <tr>
-                                    <th className="px-6 py-4">Date</th>
-                                    <th className="px-6 py-4">Invoice</th>
-                                    <th className="px-6 py-4">Buyer</th>
-                                    <th className="px-6 py-4">Broker</th>
-                                    <th className="px-6 py-4">Container</th>
-                                    <th className="px-6 py-4">Item</th>
-                                    <th className="px-6 py-4 text-right">Qty</th>
-                                    <th className="px-6 py-4 text-right">Rate</th>
-                                    <th className="px-6 py-4 text-right">Amount</th>
-                                    <th className="px-6 py-4 text-center">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {getFilteredHistory().map((sale, i, arr) => {
-                                    // Check if Previous Item belongs to same Invoice
-                                    const isSameInvoice = i > 0 && arr[i - 1].invoiceNo === sale.invoiceNo;
-
-                                    return (
-                                        <tr key={i} className={`hover:bg-slate-50/80 transition-colors ${!isSameInvoice ? 'border-t-2 border-slate-200' : 'border-t border-slate-100'}`}>
-                                            <td className="px-6 py-3 font-mono text-slate-500 whitespace-nowrap">
-                                                {!isSameInvoice && formatDate(sale.date)}
-                                            </td>
-                                            <td className="px-6 py-3 font-medium text-slate-800">
-                                                {!isSameInvoice && sale.invoiceNo}
-                                            </td>
-                                            <td className="px-6 py-3 text-slate-600">
-                                                {!isSameInvoice && sale.buyerName}
-                                            </td>
-                                            <td className="px-6 py-3 text-slate-500 italic">
-                                                {!isSameInvoice && (sale.remarks || '-')}
-                                            </td>
-                                            <td className="px-6 py-3 text-slate-600 text-xs">{getContainerInfo(sale)}</td>
-                                            <td className="px-6 py-3 font-medium text-blue-600">{sale.itemName}</td>
-                                            <td className="px-6 py-3 text-right font-bold text-slate-700">{parseFloat(sale.quantity).toLocaleString()}</td>
-                                            <td className="px-6 py-3 text-right text-slate-500">{parseFloat(sale.rate).toFixed(2)}</td>
-                                            <td className="px-6 py-3 text-right font-bold text-emerald-600">{parseFloat(sale.totalAmount).toLocaleString()}</td>
-                                            <td className="px-6 py-3 text-center flex items-center justify-center gap-2">
-                                                <button
-                                                    onClick={() => handleDownloadHistoryInvoice(sale)}
-                                                    className="text-slate-400 hover:text-green-600 transition-colors p-2 rounded-full hover:bg-green-50"
-                                                    title="Download Invoice"
-                                                >
-                                                    <Download size={16} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleEdit(sale)}
-                                                    className="text-slate-400 hover:text-blue-600 transition-colors p-2 rounded-full hover:bg-blue-50"
-                                                    title="Edit Sale"
-                                                >
-                                                    <Pencil size={16} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDelete(sale._id || sale.id)}
-                                                    className="text-slate-400 hover:text-red-600 transition-colors p-2 rounded-full hover:bg-red-50"
-                                                    title="Delete Sale"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                                {getFilteredHistory().length === 0 && (
-                                    <tr><td colSpan={10} className="text-center py-12 text-slate-400">No records found</td></tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 };
 
