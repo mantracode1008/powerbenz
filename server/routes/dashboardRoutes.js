@@ -16,7 +16,9 @@ router.get('/stats', async (req, res) => {
             totalContainers: 0,
             totalWeight: 0,
             totalSales: 0,
-            totalStockValue: 0
+            totalSales: 0,
+            totalStockValue: 0,
+            totalPurchaseWeight: 0
         },
         charts: {
             monthly: [],
@@ -41,6 +43,12 @@ router.get('/stats', async (req, res) => {
             }
         };
 
+        // Helper functions for SQL generation
+        const tableName = (name) => sequelize.getDialect() === 'postgres' ? `"${name}"` : `\`${name}\``;
+        const C = (col) => sequelize.getDialect() === 'postgres' ? `"${col}"` : col;
+        const isPostgres = sequelize.getDialect() === 'postgres';
+
+
         const sixMonthsAgo = new Date();
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
@@ -59,8 +67,23 @@ router.get('/stats', async (req, res) => {
                 attributes: []
             }]
         });
-        const pTotalWeight = ContainerItem.sum('remainingQuantity');
+        // FIXED: Total Weight (Active Stock) should match Item Summary logic
+        // Logic: Sum of (Sum of remainingQuantity per Item WHERE Sum > 0.001)
+        // This ignores items with net negative stock (errors) which Item Summary hides.
+        // Logic: Sum of (Sum of remainingQuantity per Item WHERE Sum > 0.001)
+        // This ignores items with net negative stock (errors) which Item Summary hides.
+
+        const pTotalWeight = sequelize.query(`
+            SELECT SUM(sub.stock) as "totalWeight"
+            FROM (
+                SELECT SUM(${C('remainingQuantity')}) as stock
+                FROM ${tableName('ContainerItems')}
+                GROUP BY TRIM(UPPER(${C('itemName')}))
+                HAVING SUM(${C('remainingQuantity')}) > 0.001
+            ) as sub
+        `, { type: sequelize.QueryTypes.SELECT });
         const pTotalSales = Sale.sum('totalAmount');
+        const pTotalPurchaseWeight = ContainerItem.sum('quantity');
 
         // NEW: Total Stock Value (Sum of remainingQuantity * rate)
         // Note: Use simple accumulation if dialect issues, but SQL SUM is cleaner
@@ -95,14 +118,10 @@ router.get('/stats', async (req, res) => {
             raw: true
         });
 
-        // Define isPostgres (FIX: Restore missing definition)
-        const isPostgres = sequelize.getDialect() === 'postgres';
-
         // ... (Keep existing SQL queries for Items/Stock as they are) ...
-        const tableName = (name) => isPostgres ? `"${name}"` : `\`${name}\``;
         const T_ContainerItems = isPostgres ? '"ContainerItems"' : 'ContainerItems';
         const T_Sales = isPostgres ? '"Sales"' : 'Sales';
-        const C = (col) => isPostgres ? `"${col}"` : col;
+
 
         const pTopItems = sequelize.query(`
             SELECT TRIM(UPPER(${C('itemName')})) as "name", SUM(${C('amount')}) as "value"
@@ -178,6 +197,7 @@ router.get('/stats', async (req, res) => {
         // Execute all in parallel
         const [
             totalAmount, totalContainers, totalWeight, totalSales,
+            totalPurchaseWeight,
             rawPurchaseData, rawSalesData,
             itemData,
             stockData,
@@ -190,8 +210,9 @@ router.get('/stats', async (req, res) => {
         ] = await Promise.all([
             runSafe(() => pTotalAmount, 0),
             runSafe(() => pTotalContainers, 0),
-            runSafe(() => pTotalWeight, 0),
+            runSafe(() => pTotalWeight, [{ totalWeight: 0 }]),
             runSafe(() => pTotalSales, 0),
+            runSafe(() => pTotalPurchaseWeight, 0),
             runSafe(() => pRawPurchase, []), // Fetch ALL purchase history
             runSafe(() => pRawSales, []),    // Fetch ALL sales history
             runSafe(() => pTopItems, []),
@@ -207,8 +228,9 @@ router.get('/stats', async (req, res) => {
         // Process Results for Cards (Unchanged)
         response.cards.totalAmount = totalAmount || 0;
         response.cards.totalContainers = totalContainers || 0;
-        response.cards.totalWeight = totalWeight || 0;
+        response.cards.totalWeight = totalWeight && totalWeight[0] ? (parseFloat(totalWeight[0].totalWeight) || 0) : 0;
         response.cards.totalSales = totalSales || 0;
+        response.cards.totalPurchaseWeight = totalPurchaseWeight || 0;
         response.cards.totalBuyers = totalBuyers || 0;
         response.cards.totalStockValue = totalStockValueRes && totalStockValueRes[0] ? (parseFloat(totalStockValueRes[0].totalValue) || 0) : 0; // Assign stock value
 

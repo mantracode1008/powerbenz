@@ -23,6 +23,8 @@ const ItemSummary = () => {
     const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
     const [filterType, setFilterType] = useState('month'); // 'month', 'date', 'range'
 
+    const [groupByScrapType, setGroupByScrapType] = useState(false);
+
     // Add Item Modal State
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [newItemData, setNewItemData] = useState({ name: '', defaultRate: '' });
@@ -89,7 +91,7 @@ const ItemSummary = () => {
 
     useEffect(() => {
         fetchData();
-    }, [selectedMonth, selectedDate, startDate, endDate, filterType]);
+    }, [selectedMonth, selectedDate, startDate, endDate, filterType, groupByScrapType]);
 
     const fetchData = async () => {
         try {
@@ -104,6 +106,10 @@ const ItemSummary = () => {
             } else if (filterType === 'range' && startDate && endDate) {
                 params.startDate = startDate;
                 params.endDate = endDate;
+            }
+
+            if (groupByScrapType) {
+                params.groupByScrapType = 'true';
             }
 
             // Backend returns { columns: ['01', '04'], items: [...], grandTotal: 100 }
@@ -660,6 +666,18 @@ const ItemSummary = () => {
 
                     <div className="hidden md:block w-px h-8 bg-slate-200 mx-1"></div>
 
+                    {/* Group Toggle */}
+                    <button
+                        onClick={() => setGroupByScrapType(!groupByScrapType)}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${groupByScrapType
+                            ? 'bg-purple-100 text-purple-700 border-purple-200 ring-1 ring-purple-500/20'
+                            : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                            }`}
+                    >
+                        <div className={`w-3 h-3 rounded-full border ${groupByScrapType ? 'bg-purple-500 border-purple-600' : 'bg-white border-slate-400'}`} />
+                        Group by Type
+                    </button>
+
                     {/* 3. Action Buttons */}
                     <div className="flex items-center gap-2 w-full md:w-auto">
                         <button
@@ -727,8 +745,66 @@ const ItemSummary = () => {
                                     const soldQty = item.soldQty !== undefined ? parseFloat(item.soldQty) : ((parseFloat(item.totalQty) || 0) - (parseFloat(item.activeStock) || 0));
                                     const isSelected = selectedItems.has(item.itemName);
 
+                                    // Check for Separation Header if Grouping is Active
+                                    const showGroupHeader = groupByScrapType && (idx === 0 || items[idx - 1].scrapType !== item.scrapType);
+
+                                    // Group Selection Logic
+                                    const currentScrapType = item.scrapType || 'Other';
+                                    const itemsInGroup = items.filter(i => (i.scrapType || 'Other') === currentScrapType);
+                                    const allInGroupSelected = itemsInGroup.length > 0 && itemsInGroup.every(i => selectedItems.has(i.itemName));
+
+                                    // Calculate Group Totals
+                                    const groupTotalPurchase = itemsInGroup.reduce((sum, i) => sum + (parseFloat(i.totalQty) || 0), 0);
+                                    const groupTotalSold = itemsInGroup.reduce((sum, i) => {
+                                        const sQty = i.soldQty !== undefined ? parseFloat(i.soldQty) : ((parseFloat(i.totalQty) || 0) - (parseFloat(i.activeStock) || 0));
+                                        return sum + (sQty || 0);
+                                    }, 0);
+                                    const groupTotalStock = itemsInGroup.reduce((sum, i) => sum + (parseFloat(i.currentStock !== undefined ? i.currentStock : i.activeStock) || 0), 0);
+                                    const groupTotalValue = itemsInGroup.reduce((sum, i) => sum + (parseFloat(i.currentStockValue !== undefined ? i.currentStockValue : i.stockValue) || 0), 0);
+
+                                    const handleGroupToggle = (e) => {
+                                        const isChecked = e.target.checked;
+                                        const newSet = new Set(selectedItems);
+
+                                        itemsInGroup.forEach(i => {
+                                            if (isChecked) newSet.add(i.itemName);
+                                            else newSet.delete(i.itemName);
+                                        });
+
+                                        setSelectedItems(newSet);
+                                    };
+
                                     return (
                                         <React.Fragment key={idx}>
+                                            {showGroupHeader && (
+                                                <tr className="bg-slate-100 border-y border-slate-200 sticky top-[53px] z-10">
+                                                    <td className="px-4 py-1.5 w-12 bg-slate-100 text-center">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={allInGroupSelected}
+                                                            onChange={handleGroupToggle}
+                                                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                                                        />
+                                                    </td>
+                                                    <td colSpan={2} className="px-4 py-1.5 text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                                        {item.scrapType || 'Other'} <span className="text-slate-400 font-normal ml-1">({itemsInGroup.length})</span>
+                                                    </td>
+                                                    <td className="px-6 py-1.5 text-right font-bold text-slate-700 text-xs">
+                                                        {groupTotalPurchase.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                    </td>
+                                                    <td className="px-6 py-1.5 text-right font-bold text-orange-600 text-xs">
+                                                        {groupTotalSold.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                    </td>
+                                                    <td className="px-6 py-1.5 text-right font-bold text-emerald-700 text-xs">
+                                                        {groupTotalStock.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                    </td>
+                                                    {canViewRates && (
+                                                        <td className="px-6 py-1.5 text-right font-bold text-blue-700 text-xs">
+                                                            {groupTotalValue.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            )}
                                             <tr
                                                 className={`hover:bg-slate-50 transition-colors group cursor-pointer ${selectedItem && (selectedItem._id === item._id) ? 'bg-blue-50/50' : ''} ${isSelected ? 'bg-blue-50/30' : ''}`}
                                                 onClick={(e) => {

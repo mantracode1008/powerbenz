@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { getContainers, getItems, deleteContainer } from '../services/api';
 import { formatDate } from '../utils/dateUtils';
 import { useNavigate } from 'react-router-dom';
-import { Download, Search, FileText, Plus, X, ExternalLink, ChevronDown, Trash2, AlertTriangle, Calendar } from 'lucide-react';
+import { Download, Search, FileText, Plus, X, ExternalLink, ChevronDown, Trash2, AlertTriangle, Calendar, Filter } from 'lucide-react';
 import CustomDatePicker from '../components/CustomDatePicker';
 import XLSX from 'xlsx-js-style';
 import jsPDF from 'jspdf';
@@ -21,7 +21,9 @@ const ContainerSummary = ({ viewMode = 'summary', groupByDate = false }) => {
     const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
     const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
     const [filterType, setFilterType] = useState('month'); // 'month', 'date', 'range'
+    const [groupByScrapType, setGroupByScrapType] = useState(false);
     const [selectedFirm, setSelectedFirm] = useState('');
+    const [selectedScrapType, setSelectedScrapType] = useState(null);
     const searchInputRef = React.useRef(null);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showModalExportMenu, setShowModalExportMenu] = useState(false);
@@ -105,6 +107,11 @@ const ContainerSummary = ({ viewMode = 'summary', groupByDate = false }) => {
             console.log('Containers after filter:', processList.length);
         }
 
+        // Scrap Type Filter
+        if (selectedScrapType) {
+            processList = processList.filter(c => (c.remarks || 'Unknown') === selectedScrapType);
+        }
+
         if (viewMode === 'summary') {
             // GroupByDate Logic for History Matrix View
             if (groupByDate) {
@@ -168,6 +175,14 @@ const ContainerSummary = ({ viewMode = 'summary', groupByDate = false }) => {
             });
 
             return Array.from(mergedContainersMap.values()).sort((a, b) => {
+                // If Grouping by Scrap Type is Active
+                if (groupByScrapType) {
+                    const scrapA = (a.remarks || 'Other').trim().toUpperCase();
+                    const scrapB = (b.remarks || 'Other').trim().toUpperCase();
+                    if (scrapA < scrapB) return -1;
+                    if (scrapA > scrapB) return 1;
+                }
+
                 const numComparison = (a.containerNo || '').localeCompare(b.containerNo || '', undefined, { numeric: true, sensitivity: 'base' });
                 if (numComparison !== 0) return numComparison;
                 // Sort by Date (Unload Date preferred, which is now in .date property of merged container)
@@ -186,7 +201,41 @@ const ContainerSummary = ({ viewMode = 'summary', groupByDate = false }) => {
                 return (a.containerNo || '').localeCompare(b.containerNo || '', undefined, { numeric: true, sensitivity: 'base' });
             });
         }
-    }, [containers, viewMode, filterType, selectedMonth, selectedDate, startDate, endDate]);
+    }, [containers, viewMode, filterType, selectedMonth, selectedDate, startDate, endDate, selectedFirm, selectedScrapType, groupByScrapType]);
+
+    // Compute Available Scrap Types based on current Date/Firm filters (BEFORE type filter)
+    const availableScrapTypes = React.useMemo(() => {
+        let list = Array.isArray(containers) ? containers : [];
+
+        // 1. Date Filter
+        if (filterType === 'month') {
+            list = list.filter(c => !selectedMonth || (c.date && c.date.startsWith(selectedMonth)));
+        } else if (filterType === 'date') {
+            list = list.filter(c => c.date && c.date.startsWith(selectedDate));
+        } else if (filterType === 'range') {
+            list = list.filter(c => {
+                const cDate = c.date ? c.date.slice(0, 10) : '';
+                return cDate >= startDate && cDate <= endDate;
+            });
+        }
+
+        // 2. Firm Filter
+        if (selectedFirm) {
+            const lowerSearch = selectedFirm.trim().toLowerCase();
+            list = list.filter((c) => {
+                const firmMatch = (c.firm || '').toLowerCase().includes(lowerSearch);
+                const itemMatch = (c.items || []).some(i => {
+                    const iName = i.itemName || i.name || '';
+                    return iName.toLowerCase().includes(lowerSearch);
+                });
+                return firmMatch || itemMatch;
+            });
+        }
+
+        // Extract Unique Types
+        const types = new Set(list.map(c => c.remarks).filter(Boolean));
+        return Array.from(types).sort();
+    }, [containers, filterType, selectedMonth, selectedDate, startDate, endDate, selectedFirm]);
 
     // History Grouping Logic
     const historyGroups = React.useMemo(() => {
@@ -239,6 +288,30 @@ const ContainerSummary = ({ viewMode = 'summary', groupByDate = false }) => {
 
     const handlePrevPage = () => setPage(p => Math.max(0, p - 1));
     const handleNextPage = () => setPage(p => Math.min(totalPages - 1, p + 1));
+
+    // Grouping Header Logic for Matrix View
+    const scrapGroups = React.useMemo(() => {
+        if (!groupByScrapType) return [];
+        const groups = [];
+        let currentGroup = null;
+        visibleContainers.forEach((c) => {
+            const type = (c.remarks || 'Other').trim() || 'Other';
+            if (currentGroup && currentGroup.name === type) {
+                currentGroup.span++;
+                currentGroup.totalWeight += parseFloat(c.containerWeight) || 0;
+                currentGroup.totalWorkerCount += parseInt(c.workerCount) || 0;
+            } else {
+                currentGroup = {
+                    name: type,
+                    span: 1,
+                    totalWeight: parseFloat(c.containerWeight) || 0,
+                    totalWorkerCount: parseInt(c.workerCount) || 0
+                };
+                groups.push(currentGroup);
+            }
+        });
+        return groups;
+    }, [visibleContainers, groupByScrapType]);
 
     // Calculate Totals per Item
     const itemTotals = React.useMemo(() => {
@@ -773,6 +846,51 @@ const ContainerSummary = ({ viewMode = 'summary', groupByDate = false }) => {
                 </div>
             </div>
 
+            {/* Scrap Type Filter Chips */}
+            {availableScrapTypes.length > 0 && (
+                <div className="bg-white px-4 py-3 rounded-xl shadow-sm border border-slate-200 flex flex-wrap items-center gap-2 animate-in slide-in-from-top-1">
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-2 flex items-center gap-1">
+                        <Filter size={12} />
+                        Scrap Type:
+                    </span>
+                    <button
+                        onClick={() => setSelectedScrapType(null)}
+                        className={`px-3 py-1 text-xs font-bold rounded-full border transition-all ${!selectedScrapType
+                            ? 'bg-slate-800 text-white border-slate-800 shadow-sm'
+                            : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300 hover:text-slate-700'
+                            }`}
+                    >
+                        All
+                    </button>
+                    {availableScrapTypes.map(type => (
+                        <button
+                            key={type}
+                            onClick={() => setSelectedScrapType(type === selectedScrapType ? null : type)}
+                            className={`px-3 py-1 text-xs font-bold rounded-full border transition-all ${selectedScrapType === type
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600'
+                                }`}
+                        >
+                            {type}
+                        </button>
+                    ))}
+
+                    <div className="w-px h-6 bg-slate-200 mx-2"></div>
+
+                    {/* Grouping Toggle */}
+                    <button
+                        onClick={() => setGroupByScrapType(!groupByScrapType)}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${groupByScrapType
+                            ? 'bg-purple-100 text-purple-700 border-purple-200 ring-1 ring-purple-500/20'
+                            : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                            }`}
+                    >
+                        <div className={`w-3 h-3 rounded-full border ${groupByScrapType ? 'bg-purple-500 border-purple-600' : 'bg-white border-slate-400'}`}></div>
+                        Group by Type
+                    </button>
+                </div>
+            )}
+
             {viewMode === 'history' && (
                 <div className="space-y-4 pt-4">
                     {historyGroups.map(group => (
@@ -889,6 +1007,25 @@ const ContainerSummary = ({ viewMode = 'summary', groupByDate = false }) => {
                         <div className="overflow-x-auto max-h-[600px] scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent">
                             <table className="min-w-full text-sm text-left border-collapse">
                                 <thead className="bg-slate-50/90 sticky top-0 z-30 shadow-sm backdrop-blur-md">
+                                    {/* Group Header Row */}
+                                    {groupByScrapType && (
+                                        <tr>
+                                            <th className="px-4 py-2 border-b border-r border-slate-200 bg-slate-50 sticky left-0 z-40"></th>
+                                            {scrapGroups.map((g, idx) => (
+                                                <th
+                                                    key={idx}
+                                                    colSpan={g.span}
+                                                    className="px-2 py-1 text-center font-bold text-xs uppercase tracking-wider text-slate-500 bg-slate-100 border-b border-r border-slate-200"
+                                                >
+                                                    <div>{g.name}</div>
+                                                    <div className="text-[10px] text-slate-400 font-medium normal-case mt-0.5 whitespace-nowrap">
+                                                        Wt: {g.totalWeight.toFixed(2)} | Wk: {g.totalWorkerCount}
+                                                    </div>
+                                                </th>
+                                            ))}
+                                            <th className="bg-yellow-50 sticky right-0 z-30 border-b border-slate-200"></th>
+                                        </tr>
+                                    )}
                                     <tr>
                                         <th className="px-4 py-3 font-semibold text-slate-600 border-b border-r border-slate-200 min-w-[180px] sticky left-0 bg-slate-50 z-40 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
                                             Item Name

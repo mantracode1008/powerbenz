@@ -22,6 +22,7 @@ const SaleSummary = () => {
     const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
     const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
     const [filterType, setFilterType] = useState('month'); // 'month', 'date', 'range'
+    const [groupByScrapType, setGroupByScrapType] = useState(false);
     const [showExportMenu, setShowExportMenu] = useState(false);
 
     useEffect(() => {
@@ -56,8 +57,52 @@ const SaleSummary = () => {
         }
     };
 
-    const totalAmount = Array.isArray(sales) ? sales.reduce((sum, sale) => sum + (parseFloat(sale.totalAmount) || 0), 0) : 0;
-    const totalQty = Array.isArray(sales) ? sales.reduce((sum, sale) => sum + (parseFloat(sale.quantity) || 0), 0) : 0;
+    // Grouping Logic
+    const processedSales = React.useMemo(() => {
+        if (!groupByScrapType) {
+            return sales;
+        }
+
+        // Flatten Sales based on Allocations (Source Container Scrap Type)
+        const flattened = [];
+        sales.forEach(sale => {
+            if (sale.allocations && sale.allocations.length > 0) {
+                // If we have allocations, split by them
+                sale.allocations.forEach(alloc => {
+                    const scrapType = alloc.ContainerItem?.Container?.remarks || 'Other';
+                    const ratio = alloc.quantity / sale.quantity;
+
+                    flattened.push({
+                        ...sale,
+                        _id: `${sale.id}-${alloc.id}`, // Unique Key
+                        scrapType: scrapType.trim() || 'Other',
+                        quantity: alloc.quantity, // Allocated Qty
+                        totalAmount: sale.totalAmount * ratio, // Proportional Amount
+                        isSplit: true
+                    });
+                });
+            } else {
+                // No allocations (Legacy or direct), put in 'Other'
+                flattened.push({
+                    ...sale,
+                    scrapType: 'Other',
+                    isSplit: false
+                });
+            }
+        });
+
+        // Sort by Scrap Type -> Date
+        flattened.sort((a, b) => {
+            if (a.scrapType < b.scrapType) return -1;
+            if (a.scrapType > b.scrapType) return 1;
+            return new Date(a.date) - new Date(b.date);
+        });
+
+        return flattened;
+    }, [sales, groupByScrapType]);
+
+    const totalAmount = Array.isArray(processedSales) ? processedSales.reduce((sum, sale) => sum + (parseFloat(sale.totalAmount) || 0), 0) : 0;
+    const totalQty = Array.isArray(processedSales) ? processedSales.reduce((sum, sale) => sum + (parseFloat(sale.quantity) || 0), 0) : 0;
 
     const getVehicleNumbers = (sale) => {
         if (!sale.allocations || !Array.isArray(sale.allocations)) return '-';
@@ -356,6 +401,18 @@ const SaleSummary = () => {
 
                     <div className="hidden md:block w-px h-8 bg-slate-200 mx-1"></div>
 
+                    {/* Group Toggle */}
+                    <button
+                        onClick={() => setGroupByScrapType(!groupByScrapType)}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 ${groupByScrapType
+                            ? 'bg-emerald-100 text-emerald-700 border-emerald-200 ring-1 ring-emerald-500/20'
+                            : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                            }`}
+                    >
+                        <div className={`w-3 h-3 rounded-full border ${groupByScrapType ? 'bg-emerald-500 border-emerald-600' : 'bg-white border-slate-400'}`} />
+                        Group by Type
+                    </button>
+
                     {/* 3. Action Buttons */}
                     <div className="relative w-full md:w-auto">
                         <button
@@ -406,7 +463,7 @@ const SaleSummary = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200">
-                            {sales.length === 0 ? (
+                            {processedSales.length === 0 ? (
                                 <tr>
                                     <td colSpan={canViewRates ? "8" : "6"} className="px-4 py-8 text-center text-slate-500">
                                         No sales found for selected period
@@ -414,39 +471,53 @@ const SaleSummary = () => {
                                 </tr>
                             ) : (
                                 <>
-                                    {sales.map((sale, index) => {
-                                        const isSame = index > 0 && sales[index - 1].invoiceNo === sale.invoiceNo;
+                                    {processedSales.map((sale, index) => {
+                                        // Standard mode check for same invoice
+                                        const isSame = !groupByScrapType && index > 0 && processedSales[index - 1].invoiceNo === sale.invoiceNo;
+
+                                        // Group Header Check
+                                        const showGroupHeader = groupByScrapType && (index === 0 || processedSales[index - 1].scrapType !== sale.scrapType);
+
                                         return (
-                                            <tr key={sale._id || index} className={`hover:bg-slate-50 transition-colors ${!isSame ? 'border-t-2 border-slate-200' : 'border-t border-slate-100'}`}>
-                                                <td className="px-4 py-2 text-slate-500 whitespace-nowrap">
-                                                    {!isSame && formatDate(sale.date)}
-                                                </td>
-                                                <td className="px-4 py-2 font-medium text-slate-800">
-                                                    {!isSame && sale.buyerName}
-                                                </td>
-                                                <td className="px-4 py-2 text-slate-600">
-                                                    {!isSame && (sale.invoiceNo || '-')}
-                                                </td>
-                                                <td className="px-4 py-2 text-slate-600">
-                                                    {sale.itemName}
-                                                </td>
-                                                <td className="px-4 py-2 text-slate-500 text-xs">
-                                                    {getVehicleNumbers(sale)}
-                                                </td>
-                                                <td className="px-4 py-2 text-right text-slate-600">
-                                                    {parseFloat(sale.quantity).toFixed(2)}
-                                                </td>
-                                                {canViewRates && (
+                                            <React.Fragment key={sale._id || index}>
+                                                {showGroupHeader && (
+                                                    <tr className="bg-slate-100 border-y border-slate-200 sticky top-0 z-10">
+                                                        <td colSpan={canViewRates ? 8 : 6} className="px-4 py-1.5 text-xs font-bold text-slate-600 uppercase tracking-wider pl-6">
+                                                            {sale.scrapType || 'Other'}
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                <tr className={`hover:bg-slate-50 transition-colors ${!isSame ? 'border-t-2 border-slate-200' : 'border-t border-slate-100'}`}>
+                                                    <td className="px-4 py-2 text-slate-500 whitespace-nowrap">
+                                                        {(!isSame || groupByScrapType) && formatDate(sale.date)}
+                                                    </td>
+                                                    <td className="px-4 py-2 font-medium text-slate-800">
+                                                        {(!isSame || groupByScrapType) && sale.buyerName}
+                                                    </td>
+                                                    <td className="px-4 py-2 text-slate-600">
+                                                        {(!isSame || groupByScrapType) && (sale.invoiceNo || '-')}
+                                                    </td>
+                                                    <td className="px-4 py-2 text-slate-600">
+                                                        {sale.itemName}
+                                                    </td>
+                                                    <td className="px-4 py-2 text-slate-500 text-xs">
+                                                        {getVehicleNumbers(sale)}
+                                                    </td>
                                                     <td className="px-4 py-2 text-right text-slate-600">
-                                                        {parseFloat(sale.rate).toFixed(2)}
+                                                        {parseFloat(sale.quantity).toFixed(2)}
                                                     </td>
-                                                )}
-                                                {canViewRates && (
-                                                    <td className="px-4 py-2 text-right font-bold text-emerald-600">
-                                                        {parseFloat(sale.totalAmount).toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
-                                                    </td>
-                                                )}
-                                            </tr>
+                                                    {canViewRates && (
+                                                        <td className="px-4 py-2 text-right text-slate-600">
+                                                            {parseFloat(sale.rate).toFixed(2)}
+                                                        </td>
+                                                    )}
+                                                    {canViewRates && (
+                                                        <td className="px-4 py-2 text-right font-bold text-emerald-600">
+                                                            {parseFloat(sale.totalAmount).toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            </React.Fragment>
                                         );
                                     })}
                                     {/* Total Row */}

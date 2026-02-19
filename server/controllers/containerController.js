@@ -688,7 +688,7 @@ exports.getContainerById = async (req, res) => {
 
 exports.getItemSummary = async (req, res) => {
     try {
-        const { startDate, endDate, firm, containerNo, month } = req.query;
+        const { startDate, endDate, firm, containerNo, month, groupByScrapType } = req.query;
 
         let start = startDate;
         let end = endDate;
@@ -727,6 +727,7 @@ exports.getItemSummary = async (req, res) => {
         // Fix: Select effective date for sorting/display
 
         // Construct Query with safe quotes
+        // MODIFICATION: If groupByScrapType is true, we need to select 'remarks' as Scrap Type
         const transactionQuery = `
             SELECT 
                 TRIM(UPPER(ci.${q}itemName${q})) as ${q}normalizedName${q},
@@ -735,7 +736,8 @@ exports.getItemSummary = async (req, res) => {
                 ci.${q}rate${q},
                 ci.${q}amount${q},
                 COALESCE(ci.${q}unloadDate${q}, c.${q}date${q}) as ${q}effectiveDate${q},
-                c.${q}containerNo${q}
+                c.${q}containerNo${q},
+                c.${q}remarks${q} as ${q}scrapType${q}
             FROM ${q}ContainerItems${q} ci
             JOIN ${q}Containers${q} c ON ci.${q}containerId${q} = c.${q}id${q}
             WHERE 1=1 ${whereClause}
@@ -754,23 +756,51 @@ exports.getItemSummary = async (req, res) => {
         });
 
         // 2.5 Fetch Global Stock (Matches Dashboard)
-        const globalStockData = await ContainerItem.findAll({
-            attributes: [
-                [sequelize.fn('TRIM', sequelize.fn('UPPER', sequelize.col('itemName'))), 'normName'],
-                [sequelize.fn('SUM', sequelize.col('remainingQuantity')), 'totalStock'],
-                [sequelize.literal('SUM(remainingQuantity * rate)'), 'totalValue']
-            ],
-            group: [sequelize.fn('TRIM', sequelize.fn('UPPER', sequelize.col('itemName')))],
-            having: sequelize.where(sequelize.fn('SUM', sequelize.col('remainingQuantity')), '>', 0.001),
-            raw: true
-        });
+        // MODIFICATION: If grouping by scrap type, we need global stock PER scrap type?
+        // Actually global stock is usually calculated as standard. 
+        // But if user wants to see "Copper - Heavy" vs "Copper - Light", 
+        // we need to group by (Item + ScrapType).
+        // However, standard dashboard shows Total Copper.
+        // For this Matrix View, if grouped, we want to split by Scrap Type.
+
+        let globalStockData;
+
+        if (groupByScrapType === 'true') {
+            globalStockData = await sequelize.query(`
+                SELECT 
+                    TRIM(UPPER(ci.${q}itemName${q})) as ${q}normName${q},
+                    COALESCE(c.${q}remarks${q}, 'Other') as ${q}scrapType${q},
+                    SUM(ci.${q}remainingQuantity${q}) as ${q}totalStock${q},
+                    SUM(ci.${q}remainingQuantity${q} * ci.${q}rate${q}) as ${q}totalValue${q}
+                FROM ${q}ContainerItems${q} ci
+                JOIN ${q}Containers${q} c ON ci.${q}containerId${q} = c.${q}id${q}
+                GROUP BY TRIM(UPPER(ci.${q}itemName${q})), COALESCE(c.${q}remarks${q}, 'Other')
+                HAVING SUM(ci.${q}remainingQuantity${q}) > 0.001
+            `, { type: sequelize.QueryTypes.SELECT });
+        } else {
+            globalStockData = await ContainerItem.findAll({
+                attributes: [
+                    [sequelize.fn('TRIM', sequelize.fn('UPPER', sequelize.col('itemName'))), 'normName'],
+                    [sequelize.fn('SUM', sequelize.col('remainingQuantity')), 'totalStock'],
+                    [sequelize.literal('SUM(remainingQuantity * rate)'), 'totalValue']
+                ],
+                group: [sequelize.fn('TRIM', sequelize.fn('UPPER', sequelize.col('itemName')))],
+                having: sequelize.where(sequelize.fn('SUM', sequelize.col('remainingQuantity')), '>', 0.001),
+                raw: true
+            });
+        }
 
         const globalStockMap = {};
         const globalValueMap = {};
 
         globalStockData.forEach(g => {
-            globalStockMap[g.normName] = parseFloat(g.totalStock) || 0;
-            globalValueMap[g.normName] = parseFloat(g.totalValue) || 0;
+            // Key depends on grouping
+            const key = groupByScrapType === 'true'
+                ? `${g.normName}|${(g.scrapType || 'Other').trim()}`
+                : g.normName;
+
+            globalStockMap[key] = parseFloat(g.totalStock) || 0;
+            globalValueMap[key] = parseFloat(g.totalValue) || 0;
         });
 
         // 2.6 Fetch Real Sales Data (From Sales Table)
@@ -778,29 +808,59 @@ exports.getItemSummary = async (req, res) => {
         const salesReplacements = {};
 
         if (start && end) {
-            salesWhere = `WHERE ${q}date${q} BETWEEN :startDate AND :endDate`;
+            salesWhere = `WHERE s.${q}date${q} BETWEEN :startDate AND :endDate`;
             salesReplacements.startDate = start;
             salesReplacements.endDate = end;
         }
 
-        const salesQuery = `
-            SELECT 
-                TRIM(UPPER(${q}itemName${q})) as ${q}normName${q},
-                SUM(${q}quantity${q}) as ${q}soldQty${q},
-                SUM(${q}totalAmount${q}) as ${q}soldAmt${q}
-            FROM ${q}Sales${q}
-            ${salesWhere}
-            GROUP BY TRIM(UPPER(${q}itemName${q}))
-        `;
+        /* 
+           MODIFICATION: Sales Grouping
+           If GroupByScrapType:
+           We need to JOIN SaleAllocations -> ContainerItem -> Container
+           to find WHICH scrap type the sold item came from.
+           This splits a single sale into multiple rows if it used mixed sources.
+        */
+
+        let salesQuery = '';
+        if (groupByScrapType === 'true') {
+            salesQuery = `
+                SELECT 
+                    TRIM(UPPER(s.${q}itemName${q})) as ${q}normName${q},
+                    COALESCE(c.${q}remarks${q}, 'Other') as ${q}scrapType${q},
+                    SUM(sa.${q}quantity${q}) as ${q}soldQty${q},
+                    SUM(sa.${q}quantity${q} * s.${q}rate${q}) as ${q}soldAmt${q} 
+                FROM ${q}Sales${q} s
+                JOIN ${q}SaleAllocations${q} sa ON s.${q}id${q} = sa.${q}saleId${q}
+                JOIN ${q}ContainerItems${q} ci ON sa.${q}containerItemId${q} = ci.${q}id${q}
+                JOIN ${q}Containers${q} c ON ci.${q}containerId${q} = c.${q}id${q}
+                ${salesWhere}
+                GROUP BY TRIM(UPPER(s.${q}itemName${q})), COALESCE(c.${q}remarks${q}, 'Other')
+            `;
+        } else {
+            salesQuery = `
+                SELECT 
+                    TRIM(UPPER(${q}itemName${q})) as ${q}normName${q},
+                    SUM(${q}quantity${q}) as ${q}soldQty${q},
+                    SUM(${q}totalAmount${q}) as ${q}soldAmt${q}
+                FROM ${q}Sales${q} s
+                ${salesWhere}
+                GROUP BY TRIM(UPPER(${q}itemName${q}))
+            `;
+        }
 
         const salesData = await sequelize.query(salesQuery, {
             replacements: salesReplacements,
             type: sequelize.QueryTypes.SELECT
         });
 
+
         const salesMap = {};
         salesData.forEach(s => {
-            salesMap[s.normName] = {
+            const key = groupByScrapType === 'true'
+                ? `${s.normName}|${(s.scrapType || 'Other').trim()}`
+                : s.normName;
+
+            salesMap[key] = {
                 qty: parseFloat(s.soldQty) || 0,
                 val: parseFloat(s.soldAmt) || 0
             };
@@ -810,32 +870,50 @@ exports.getItemSummary = async (req, res) => {
         const itemMap = new Map();
         const uniqueContainers = new Set();
 
-        // Initialize Master Items
-        allItems.forEach(item => {
-            const normName = item.name.trim().toUpperCase();
-            itemMap.set(normName, {
-                _id: item.id, // Add ID for frontend actions
-                itemName: item.name,
-                totalQty: 0,
-                activeStock: 0,
-                stockValue: 0, // NEW: Track Value of Active Stock
-                dailyQty: {}
+        // If Grouping, we can't pre-fill from Master Items easily because 
+        // we don't know which items exist in which scrap type without data.
+        // So we build from Transactions + Stock + Sales, then merge Master Names?
+        // Or we iterate AllItems and just have them for "Default" or "Unknown"?
+        // Better: Build map dynamically.
+
+        if (groupByScrapType === 'true') {
+            // In Group Mode, we rely on data to create entries
+            // We can iterate headers (Master Items) later if we want to show 0s?
+            // But usually 0s for specific scrap types (that don't exist) is noise.
+            // We only show rows that have Activity OR Stock.
+        } else {
+            // Default Mode: Initialize Master Items
+            allItems.forEach(item => {
+                const normName = item.name.trim().toUpperCase();
+                itemMap.set(normName, {
+                    _id: item.id, // Add ID for frontend actions
+                    itemName: item.name,
+                    totalQty: 0,
+                    activeStock: 0,
+                    stockValue: 0, // NEW: Track Value of Active Stock
+                    dailyQty: {}
+                });
             });
-        });
+        }
 
         // Merging Transactions
         transactionItems.forEach(t => {
             const normName = t.normalizedName;
+            const scrapType = (t.scrapType || 'Other').trim();
+
+            // Key Strategy
+            const key = groupByScrapType === 'true' ? `${normName}|${scrapType}` : normName;
 
             // Use Container Number
             const colKey = (t.containerNo || 'Unknown').trim();
             uniqueContainers.add(colKey);
 
-            if (!itemMap.has(normName)) {
-                // Orphan item handling
-                itemMap.set(normName, {
-                    _id: `orphan-${t.normalizedName}`,
-                    itemName: t.normalizedName,
+            if (!itemMap.has(key)) {
+                // Initialize if missing (Orphan or Group Mode New Entry)
+                itemMap.set(key, {
+                    _id: groupByScrapType === 'true' ? `group-${key}` : `orphan-${normName}`,
+                    itemName: normName, // Display Name
+                    scrapType: scrapType, // Extra Metadata
                     totalQty: 0,
                     activeStock: 0,
                     stockValue: 0,
@@ -843,7 +921,7 @@ exports.getItemSummary = async (req, res) => {
                 });
             }
 
-            const entry = itemMap.get(normName);
+            const entry = itemMap.get(key);
             const qty = parseFloat(t.quantity) || 0;
             const remaining = parseFloat(t.remainingQuantity) || 0;
             const rate = parseFloat(t.rate) || 0;
@@ -856,6 +934,24 @@ exports.getItemSummary = async (req, res) => {
             entry.dailyQty[colKey] = (entry.dailyQty[colKey] || 0) + qty;
         });
 
+        // Merge Global Stock (for items with stock but no transactions in period)
+        Object.keys(globalStockMap).forEach(key => {
+            if (!itemMap.has(key)) {
+                const [name, type] = groupByScrapType === 'true' ? key.split('|') : [key, null];
+                itemMap.set(key, {
+                    _id: `stock-${key}`,
+                    itemName: name,
+                    scrapType: type || 'Other',
+                    totalQty: 0,
+                    activeStock: 0,
+                    stockValue: 0,
+                    dailyQty: {}
+                });
+            }
+            // We don't add to map here, we set property later.
+            // But valid to ensure key exists.
+        });
+
         // 4. Prepare Response
         const columns = []; // User requested ONLY Total (No breakdown columns)
 
@@ -866,14 +962,21 @@ exports.getItemSummary = async (req, res) => {
 
         const finalItems = mergedItems.map(item => {
             const pctVal = (grandTotalQty > 0) ? ((item.totalQty / grandTotalQty) * 100) : 0;
+
             // Map global stock
             const normName = item.itemName.trim().toUpperCase();
-            const currentStock = globalStockMap[normName] || 0;
-            const currentStockValue = globalValueMap[normName] || 0;
-            const realSales = salesMap[normName] || { qty: 0, val: 0 };
+            const key = groupByScrapType === 'true'
+                ? `${normName}|${item.scrapType}`
+                : normName;
+
+            const currentStock = globalStockMap[key] || 0;
+            const currentStockValue = globalValueMap[key] || 0;
+            const realSales = salesMap[key] || { qty: 0, val: 0 };
 
             return {
                 ...item,
+                // Refine Name for Group Mode if needed? Frontend can handle logic.
+                // We send scrapType property.
                 currentStock: currentStock, // Add global stock
                 currentStockValue: currentStockValue, // Add global stock value
                 soldQty: realSales.qty, // Overwrite/Add real sales qty
@@ -883,7 +986,23 @@ exports.getItemSummary = async (req, res) => {
         });
 
         // Sort: High value items first
-        finalItems.sort((a, b) => b.totalQty - a.totalQty);
+        // If grouped, maybe sort by ScrapType then Item Name?
+        if (groupByScrapType === 'true') {
+            finalItems.sort((a, b) => {
+                // Sort by Scrap Type
+                const typeA = (a.scrapType || 'Other').toUpperCase();
+                const typeB = (b.scrapType || 'Other').toUpperCase();
+                if (typeA < typeB) return -1;
+                if (typeA > typeB) return 1;
+
+                // Then by Item Name
+                if (a.itemName < b.itemName) return -1;
+                if (a.itemName > b.itemName) return 1;
+                return 0;
+            });
+        } else {
+            finalItems.sort((a, b) => b.totalQty - a.totalQty);
+        }
 
         // Send Object with Metadata
         res.json({

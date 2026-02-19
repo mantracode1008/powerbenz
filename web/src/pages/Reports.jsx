@@ -119,13 +119,25 @@ const Reports = () => {
         const saleWeight = filteredSales.reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
         const saleAmount = filteredSales.reduce((sum, s) => sum + (parseFloat(s.totalAmount) || 0), 0);
 
-        return { purchaseWeight, purchaseAmount, saleWeight, saleAmount };
+        const activeStockWeight = filteredContainers.reduce((sum, c) => {
+            const containerStock = c.items ? c.items.reduce((s, i) => s + (parseFloat(i.remainingQuantity) || 0), 0) : 0;
+            return sum + containerStock;
+        }, 0);
+
+        // Calculate Stock Value (approximate based on purchase rate)
+        const activeStockAmount = filteredContainers.reduce((sum, c) => {
+            const containerStockVal = c.items ? c.items.reduce((s, i) => s + ((parseFloat(i.remainingQuantity) || 0) * (parseFloat(i.rate) || 0)), 0) : 0;
+            return sum + containerStockVal;
+        }, 0);
+
+        return { purchaseWeight, purchaseAmount, saleWeight, saleAmount, activeStockWeight, activeStockAmount };
     }, [filteredContainers, filteredSales]);
 
     // Charts Data
     const barData = [
         { name: 'Purchase', weight: metrics.purchaseWeight, amount: metrics.purchaseAmount },
-        { name: 'Sales', weight: metrics.saleWeight, amount: metrics.saleAmount }
+        { name: 'Sales', weight: metrics.saleWeight, amount: metrics.saleAmount },
+        { name: 'Active Stock', weight: metrics.activeStockWeight, amount: metrics.activeStockAmount } // Added Stock Balance
     ];
 
     const pieData = useMemo(() => {
@@ -230,16 +242,16 @@ const Reports = () => {
         return Object.entries(itemMap)
             .map(([name, data]) => {
                 const soldQty = salesMap[name] || 0;
-                // Fix: Calculate Active Stock based on Flow (Purchase - Sold) for Report Consistency
-                // This ensures "Total Purchase - Total Sold = Active Stock" always holds true in this view
-                const calculatedStock = data.purchase - soldQty;
+                // Fix: Use ACTUAL DB STOCK (remainingQuantity) for Stock Balance
+                // The previous (Purchase - Sales) logic was incorrect for partial periods or non-FIFO flows.
+                const dbStock = data.stock;
 
                 return {
                     name,
                     purchase: data.purchase,
-                    stock: calculatedStock,
+                    stock: dbStock, // Use correct DB remaining quantity
                     sold: soldQty,
-                    dbStock: data.stock // Keep actual DB stock ref if needed
+                    dbStock: dbStock
                 };
             })
             .sort((a, b) => b.stock - a.stock);
@@ -297,7 +309,7 @@ const Reports = () => {
             ["Metric", "Weight (kg)", "Amount (₹)"],
             ["Total Purchase", metrics.purchaseWeight, metrics.purchaseAmount],
             ["Total Sales", metrics.saleWeight, metrics.saleAmount],
-            ["Net Balance", metrics.purchaseWeight - metrics.saleWeight, metrics.saleAmount - metrics.purchaseAmount]
+            ["Active Stock", metrics.activeStockWeight, metrics.activeStockAmount]
         ];
 
         // Purchase Sheet (Detailed Grouped)
@@ -439,6 +451,7 @@ const Reports = () => {
         fullReportData.push(["Metric", "Weight (kg)", "Amount (Rs)"]);
         fullReportData.push(["Total Purchase", metrics.purchaseWeight, metrics.purchaseAmount]);
         fullReportData.push(["Total Sales", metrics.saleWeight, metrics.saleAmount]);
+        fullReportData.push(["Active Stock", metrics.activeStockWeight, metrics.activeStockAmount]);
         fullReportData.push([]); // Spacer
 
         // 3. Purchase History
@@ -563,6 +576,7 @@ const Reports = () => {
             body: [
                 ['Total Purchase', metrics.purchaseWeight.toFixed(2), metrics.purchaseAmount.toLocaleString('en-IN')],
                 ['Total Sales', metrics.saleWeight.toFixed(2), metrics.saleAmount.toLocaleString('en-IN')],
+                ['Active Stock', metrics.activeStockWeight.toFixed(2), metrics.activeStockAmount.toLocaleString('en-IN')]
             ],
             theme: 'grid',
             headStyles: { fillColor: [41, 128, 185] }
@@ -878,8 +892,8 @@ const Reports = () => {
                             onClick={() => setKpiModal({ type: 'sales', title: 'Detailed Sales History', data: filteredSales })}
                         />
                         <KPICard
-                            title="Stock (Balance)"
-                            value={metrics.purchaseWeight - metrics.saleWeight}
+                            title="Active Stock"
+                            value={metrics.activeStockWeight}
                             unit="kg"
                             icon={Box}
                             color="orange"
