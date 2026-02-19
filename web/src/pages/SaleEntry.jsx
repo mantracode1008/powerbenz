@@ -33,7 +33,6 @@ const SaleEntry = () => {
         date: new Date().toISOString().split('T')[0],
         buyerName: '',
         invoiceNo: '',
-        invoiceNo: '',
         hsnCode: '7204',
         broker: '', // Previously 'remarks'
         roundOff: 0 // New field for adjustment
@@ -312,7 +311,6 @@ const SaleEntry = () => {
                     itemName: item.itemName,
                     quantity: item.quantity,
                     rate: item.rate,
-                    rate: item.rate,
                     hsnCode: item.hsnCode,
                     sourceContainers: item.sourceContainers,
                     roundOff: payload.roundOff // Add to params
@@ -349,7 +347,6 @@ const SaleEntry = () => {
         setInvoiceData({
             date: isoDate,
             buyerName: sale.buyerName,
-            invoiceNo: sale.invoiceNo,
             invoiceNo: sale.invoiceNo,
             hsnCode: sale.hsnCode || '7204',
             broker: sale.remarks || '',
@@ -776,7 +773,6 @@ const SaleEntry = () => {
         const invoiceData = {
             invoiceNo: sale.invoiceNo,
             date: sale.date,
-            buyerName: sale.buyerName,
             buyerName: sale.buyerName,
             remarks: sale.remarks,
             roundOff: sale.roundOff || 0, // Pass specific roundOff
