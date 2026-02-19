@@ -287,7 +287,6 @@ const SaleEntry = () => {
                 date: invoiceData.date,
                 buyerName: invoiceData.buyerName,
                 invoiceNo: invoiceData.invoiceNo,
-                invoiceNo: invoiceData.invoiceNo,
                 remarks: invoiceData.broker, // Mapping Broker -> Remarks
                 roundOff: invoiceData.roundOff, // Add to payload
                 items: cartItems.map(item => ({
