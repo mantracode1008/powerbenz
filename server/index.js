@@ -80,7 +80,7 @@ const apiRouter = express.Router();
 apiRouter.get('/version', (req, res) => {
     res.json({
 
-        version: '1.6.9', // CLIENT-FIX-UPDATE
+        version: '1.7.0', // WEIGHT-GAIN-FIX-UPDATE
         timestamp: new Date().toISOString(),
         auth_status: 'Active',
         deploy_id: 'VPS-CLIENT-FIX'
