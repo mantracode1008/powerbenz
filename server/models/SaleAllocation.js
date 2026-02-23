@@ -15,6 +15,13 @@ const SaleAllocation = sequelize.define('SaleAllocation', {
         validate: {
             min: 0
         }
+    },
+    gain: {
+        type: DataTypes.FLOAT,
+        defaultValue: 0,
+        validate: {
+            min: 0
+        }
     }
 });
 

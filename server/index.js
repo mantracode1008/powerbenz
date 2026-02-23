@@ -1,4 +1,5 @@
 const path = require('path');
+// Trigger restart for env change
 const fs = require('fs');
 
 require('dotenv').config({ path: path.join(__dirname, '.env') });
@@ -130,7 +131,7 @@ app.use('/api/dashboard', auth, dashboardRoutes);
 app.use('/api/sales', auth, saleRoutes);
 app.use('/api/firms', auth, firmRoutes);
 app.use('/api/scrap-types', auth, scrapTypeRoutes);
-app.use('/api/logs', auth, auditRoutes);
+app.use('/api', apiRouter);
 app.use('/api/utils', auth, require('./routes/utilRoutes'));
 
 // Database Connection & Server Start

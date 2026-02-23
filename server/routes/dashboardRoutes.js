@@ -83,6 +83,7 @@ router.get('/stats', async (req, res) => {
             ) as sub
         `, { type: sequelize.QueryTypes.SELECT });
         const pTotalSales = Sale.sum('totalAmount');
+        const pTotalSalesWeight = Sale.sum('quantity');
         const pTotalPurchaseWeight = ContainerItem.sum('quantity');
 
         // NEW: Total Stock Value (Sum of remainingQuantity * rate)
@@ -100,17 +101,21 @@ router.get('/stats', async (req, res) => {
         // --- CHARTS DATA FETCHING (Robust JS Grouping) ---
         // Fetch raw data arrays instead of grouping in DB to avoid dialect issues (sqlite vs pg dates)
 
-        const pRawPurchase = Container.findAll({
-            attributes: ['date', 'totalAmount'],
-            where: {
-                date: { [Op.ne]: null } // Simple non-null check
-            },
-            order: [['date', 'ASC']],
+        const pRawPurchase = ContainerItem.findAll({
+            attributes: [
+                [sequelize.col('Container.date'), 'date'],
+                ['quantity', 'value']
+            ],
+            include: [{
+                model: Container,
+                attributes: [],
+                where: { date: { [Op.ne]: null } }
+            }],
             raw: true
         });
 
         const pRawSales = Sale.findAll({
-            attributes: ['date', 'totalAmount'],
+            attributes: ['date', ['quantity', 'value']],
             where: {
                 date: { [Op.ne]: null }
             },
@@ -198,6 +203,7 @@ router.get('/stats', async (req, res) => {
         const [
             totalAmount, totalContainers, totalWeight, totalSales,
             totalPurchaseWeight,
+            totalSalesWeight,
             rawPurchaseData, rawSalesData,
             itemData,
             stockData,
@@ -213,6 +219,7 @@ router.get('/stats', async (req, res) => {
             runSafe(() => pTotalWeight, [{ totalWeight: 0 }]),
             runSafe(() => pTotalSales, 0),
             runSafe(() => pTotalPurchaseWeight, 0),
+            runSafe(() => pTotalSalesWeight, 0),
             runSafe(() => pRawPurchase, []), // Fetch ALL purchase history
             runSafe(() => pRawSales, []),    // Fetch ALL sales history
             runSafe(() => pTopItems, []),
@@ -230,6 +237,7 @@ router.get('/stats', async (req, res) => {
         response.cards.totalContainers = totalContainers || 0;
         response.cards.totalWeight = totalWeight && totalWeight[0] ? (parseFloat(totalWeight[0].totalWeight) || 0) : 0;
         response.cards.totalSales = totalSales || 0;
+        response.cards.totalSalesWeight = totalSalesWeight || 0;
         response.cards.totalPurchaseWeight = totalPurchaseWeight || 0;
         response.cards.totalBuyers = totalBuyers || 0;
         response.cards.totalStockValue = totalStockValueRes && totalStockValueRes[0] ? (parseFloat(totalStockValueRes[0].totalValue) || 0) : 0; // Assign stock value
@@ -244,7 +252,7 @@ router.get('/stats', async (req, res) => {
                     const dateObj = new Date(item.date);
                     if (isNaN(dateObj)) return;
                     const key = formatKey(dateObj);
-                    map[key] = (map[key] || 0) + (parseFloat(item.totalAmount) || 0);
+                    map[key] = (map[key] || 0) + (parseFloat(item.value) || 0);
                 } catch (e) { /* ignore invalid dates */ }
             });
             return map;

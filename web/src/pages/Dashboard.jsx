@@ -144,7 +144,7 @@ const Dashboard = () => {
             </div>
 
             {/* Summary Cards */}
-            <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6`}>
+            <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6`}>
                 <StatCard
                     title="Total Purchase Stock"
                     value={parseFloat(cards.totalPurchaseWeight) || 0}
@@ -171,6 +171,21 @@ const Dashboard = () => {
                     onClick={() => {
                         if (isAdmin || user?.permissions?.includes('/summary')) {
                             navigate('/summary', { state: { activeTab: 'item' } });
+                        }
+                    }}
+                />
+
+                <StatCard
+                    title="Sales Summary"
+                    value={parseFloat(cards.totalSalesWeight) || 0}
+                    suffix="kg"
+                    icon={TrendingUp}
+                    color="bg-emerald-500"
+                    iconColor="text-slate-800"
+                    subtext="Total Outgoing Weight"
+                    onClick={() => {
+                        if (isAdmin || user?.permissions?.includes('/summary')) {
+                            navigate('/summary', { state: { activeTab: 'sale' } });
                         }
                     }}
                 />
@@ -255,7 +270,7 @@ const Dashboard = () => {
                                     />
                                     <Tooltip
                                         contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: 'none', boxShadow: '0 4px 20px -2px rgba(0,0,0,0.1)' }}
-                                        formatter={(value) => value.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
+                                        formatter={(value) => `${value.toLocaleString('en-IN')} kg`}
                                     />
                                     <Legend iconType="circle" wrapperStyle={{ paddingTop: '20px' }} />
 
@@ -283,32 +298,7 @@ const Dashboard = () => {
                     </div>
                 )}
 
-                {canViewRates && (
-                    <div className="glass-card p-6 border border-slate-200 bg-white">
-                        <h3 className="text-lg font-bold text-slate-800 mb-6">Top Items by Value</h3>
-                        <div className="h-[300px] w-full">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={charts.items} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
-                                    <defs>
-                                        <linearGradient id="colorItems" x1="0" y1="0" x2="1" y2="0">
-                                            <stop offset="0%" stopColor="#3b82f6" stopOpacity={1} />
-                                            <stop offset="100%" stopColor="#2563eb" stopOpacity={1} />
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e2e8f0" opacity={0.8} />
-                                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                                    <YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                                    <Tooltip
-                                        cursor={{ fill: 'rgba(0,0,0,0.05)' }}
-                                        contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', color: '#1e293b', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                        formatter={(value) => value.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
-                                    />
-                                    <Bar dataKey="value" fill="url(#colorItems)" radius={[0, 4, 4, 0]} barSize={20} name="Value" />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </div>
-                    </div>
-                )}
+                {/* Purchase Items Value Chart Removed as per client request */}
 
                 {canViewRates && (
                     <div className="glass-card p-6 border border-slate-200 bg-white">

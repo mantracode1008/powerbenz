@@ -17,7 +17,8 @@ const ContainerEntry = () => {
     const isEditMode = !!id;
 
     // Permission Logic (STRICT ADMIN ONLY)
-    const canViewRates = user?.role === 'Admin';
+    // Permission Logic (STRICTLY HIDDEN AS PER CLIENT REQUEST)
+    const canViewRates = false;
 
     const [entryMode, setEntryMode] = useState('existing'); // Default to Existing for daily speed
     const [activeContainers, setActiveContainers] = useState([]);

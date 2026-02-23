@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { getContainers, getSales, updateContainer } from '../services/api';
+import { getContainers, getSales, updateContainer, getItems } from '../services/api';
 import { formatDate } from '../utils/dateUtils';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { IndianRupee, Package, FileText, Calendar, Filter, Download, ArrowUpRight, ArrowDownRight, Box, FileSpreadsheet, X } from 'lucide-react';
@@ -25,12 +25,18 @@ const Reports = () => {
         return toLocalISO(new Date());
     };
 
+    const [filterType, setFilterType] = useState('month'); // 'date' or 'month'
+    const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
     const [fromDate, setFromDate] = useState('');
     const [toDate, setToDate] = useState('');
+    const [selectedItemName, setSelectedItemName] = useState('All');
+    const [selectedItemType, setSelectedItemType] = useState('All');
+    const [selectedAssortment, setSelectedAssortment] = useState('All');
     const [activeTab, setActiveTab] = useState('overview'); // overview, purchases, sales
 
     const [containers, setContainers] = useState([]);
     const [sales, setSales] = useState([]);
+    const [itemMaster, setItemMaster] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showExportMenu, setShowExportMenu] = useState(false);
     const [showStockExportMenu, setShowStockExportMenu] = useState(false);
@@ -42,15 +48,30 @@ const Reports = () => {
     };
 
     useEffect(() => {
+        if (filterType === 'month' && selectedMonth) {
+            const [year, month] = selectedMonth.split('-');
+            const firstDay = `${year}-${month}-01`;
+            const lastDayDate = new Date(year, month, 0);
+            const lastDay = `${year}-${month}-${String(lastDayDate.getDate()).padStart(2, '0')}`;
+            setFromDate(firstDay);
+            setToDate(lastDay);
+        } else if (filterType === 'date') {
+            // No automatic sync to follow user's manual selection
+        }
+    }, [filterType, selectedMonth]);
+
+    useEffect(() => {
         const fetchData = async () => {
             try {
-                const [contRes, saleRes] = await Promise.all([
+                const [contRes, saleRes, itemRes] = await Promise.all([
                     // Fetch ALL history (bypass default 50 limit and include null-date items)
                     getContainers({ limit: 1000000 }),
-                    getSales({ limit: 1000000 })
+                    getSales({ limit: 1000000 }),
+                    getItems()
                 ]);
                 setContainers(contRes.data);
                 setSales(saleRes.data);
+                setItemMaster(itemRes.data || []);
             } catch (error) {
                 console.error('Error fetching report data:', error);
             } finally {
@@ -74,8 +95,102 @@ const Reports = () => {
         });
     };
 
-    const filteredContainers = useMemo(() => filterData(containers, 'date'), [containers, fromDate, toDate]);
-    const filteredSales = useMemo(() => filterData(sales, 'date'), [sales, fromDate, toDate]);
+    // Item Name -> Category Mapping
+    const itemCategoryMap = useMemo(() => {
+        const map = {};
+        itemMaster.forEach(item => {
+            if (item.name) {
+                map[item.name.trim().toUpperCase()] = item.category || 'General';
+            }
+        });
+        return map;
+    }, [itemMaster]);
+
+    // List of unique scrap types (Item Names) from all data
+    const scrapTypes = useMemo(() => {
+        const types = new Set();
+        containers.forEach(c => c.items?.forEach(i => i.itemName && types.add(i.itemName.trim())));
+        sales.forEach(s => s.itemName && types.add(s.itemName.trim()));
+        return ['All', ...Array.from(types).sort()];
+    }, [containers, sales]);
+
+    // List of unique Item Types (Categories)
+    const itemTypes = useMemo(() => {
+        const types = new Set();
+        itemMaster.forEach(item => item.category && types.add(item.category.trim()));
+        // Also check if any transaction items have categories not in master (unlikely but safe)
+        Object.values(itemCategoryMap).forEach(cat => types.add(cat));
+        return ['All', ...Array.from(types).sort()];
+    }, [itemMaster, itemCategoryMap]);
+
+    // List of unique Assortment Types (Container Remarks)
+    const assortmentTypes = useMemo(() => {
+        const types = new Set();
+        containers.forEach(c => c.remarks && types.add(c.remarks.trim()));
+        return ['All', ...Array.from(types).sort()];
+    }, [containers]);
+
+    const filteredContainers = useMemo(() => {
+        let data = filterData(containers, 'date');
+
+        // 1. Filter by Assortment Type (Remarks) - Made Case-Insensitive
+        if (selectedAssortment !== 'All') {
+            const target = selectedAssortment.trim().toUpperCase();
+            data = data.filter(c => (c.remarks || '').trim().toUpperCase() === target);
+        }
+
+        // 2. Filter internal items by Name and Category
+        data = data.map(c => ({
+            ...c,
+            items: c.items?.filter(i => {
+                const iName = (i.itemName || '').trim().toUpperCase();
+                const nameMatch = selectedItemName === 'All' || iName === selectedItemName.trim().toUpperCase();
+
+                const category = (itemCategoryMap[iName] || 'General').trim().toUpperCase();
+                const categoryMatch = selectedItemType === 'All' || category === selectedItemType.trim().toUpperCase();
+
+                return nameMatch && categoryMatch;
+            }) || []
+        })).filter(c => c.items.length > 0);
+
+        return data;
+    }, [containers, fromDate, toDate, selectedItemName, selectedItemType, selectedAssortment, itemCategoryMap]);
+
+    const filteredSales = useMemo(() => {
+        let data = filterData(sales, 'date');
+
+        if (selectedAssortment !== 'All') {
+            const target = selectedAssortment.trim().toUpperCase();
+            data = data.filter(s => {
+                // Check sale-level remarks (Broker/Assortment)
+                const saleRemarkMatch = (s.remarks || '').trim().toUpperCase() === target;
+                if (saleRemarkMatch) return true;
+
+                // Check allocations' container remarks
+                if (s.allocations && s.allocations.length > 0) {
+                    return s.allocations.some(a => {
+                        const containerRemarks = (a.ContainerItem?.Container?.remarks || '').trim().toUpperCase();
+                        return containerRemarks === target;
+                    });
+                }
+                return false;
+            });
+        }
+
+        if (selectedItemName !== 'All') {
+            data = data.filter(s => (s.itemName || '').trim().toUpperCase() === selectedItemName.trim().toUpperCase());
+        }
+
+        if (selectedItemType !== 'All') {
+            data = data.filter(s => {
+                const iName = (s.itemName || '').trim().toUpperCase();
+                const category = (itemCategoryMap[iName] || 'General').trim().toUpperCase();
+                return category === selectedItemType.trim().toUpperCase();
+            });
+        }
+
+        return data;
+    }, [sales, fromDate, toDate, selectedItemName, selectedItemType, selectedAssortment, itemCategoryMap]);
 
     // Flatten Purchases for Display (Item-wise)
     const flattenedPurchases = useMemo(() => {
@@ -114,10 +229,18 @@ const Reports = () => {
             const itemWeight = c.items ? c.items.reduce((s, i) => s + (parseFloat(i.quantity) || 0), 0) : 0;
             return sum + itemWeight;
         }, 0);
-        const purchaseAmount = filteredContainers.reduce((sum, c) => sum + (parseFloat(c.totalAmount) || 0), 0);
+
+        // FIX: Sum only the filtered items' amounts, not the container's total amount
+        const purchaseAmount = filteredContainers.reduce((sum, c) => {
+            const itemAmount = c.items ? c.items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0) : 0;
+            return sum + itemAmount;
+        }, 0);
 
         const saleWeight = filteredSales.reduce((sum, s) => sum + (parseFloat(s.quantity) || 0), 0);
-        const saleAmount = filteredSales.reduce((sum, s) => sum + (parseFloat(s.totalAmount) || 0), 0);
+
+        // FIX: Ensure saleAmount correctly sums individual items if filteredSales is itemized
+        // Based on flatten logic elsewhere, sales records seem to be per-item in reports list.
+        const saleAmount = filteredSales.reduce((sum, s) => sum + (parseFloat(s.totalAmount || s.amount) || 0), 0);
 
         const activeStockWeight = filteredContainers.reduce((sum, c) => {
             const containerStock = c.items ? c.items.reduce((s, i) => s + (parseFloat(i.remainingQuantity) || 0), 0) : 0;
@@ -302,14 +425,14 @@ const Reports = () => {
     const exportToExcel = () => {
         const wb = XLSX.utils.book_new();
 
-        // Summary Sheet Data Preparation (Sheet creation moved to end to avoid duplicates)
+        // Summary Sheet Data Preparation
         const summaryData = [
             ["Report", `From ${formatDate(fromDate)} To ${formatDate(toDate)}`],
             [],
-            ["Metric", "Weight (kg)", "Amount (₹)"],
-            ["Total Purchase", metrics.purchaseWeight, metrics.purchaseAmount],
-            ["Total Sales", metrics.saleWeight, metrics.saleAmount],
-            ["Active Stock", metrics.activeStockWeight, metrics.activeStockAmount]
+            ["Metric", "Weight (kg)"],
+            ["Total Purchase", metrics.purchaseWeight],
+            ["Total Sales", metrics.saleWeight],
+            ["Active Stock", metrics.activeStockWeight]
         ];
 
         // Purchase Sheet (Detailed Grouped)
@@ -324,7 +447,6 @@ const Reports = () => {
                 Firm: isSame ? '' : p.firm,
                 ItemName: p.itemName,
                 NetWeight: p.itemQuantity,
-                Amount: p.itemAmount,
                 AssortmentWeight: (isSame || !p.assortmentWeight) ? '' : parseFloat(p.assortmentWeight).toFixed(2)
             });
             if (!isSame) lastContainerId = p.id;
@@ -337,7 +459,6 @@ const Reports = () => {
             Firm: '',
             ItemName: '',
             NetWeight: metrics.purchaseWeight,
-            Amount: metrics.purchaseAmount,
             AssortmentWeight: ''
         });
 
@@ -572,11 +693,11 @@ const Reports = () => {
         // Metrics Summary
         autoTable(doc, {
             startY: 35,
-            head: [['Metric', 'Weight (kg)', 'Amount (Rs)']],
+            head: [['Metric', 'Weight (kg)']],
             body: [
-                ['Total Purchase', metrics.purchaseWeight.toFixed(2), metrics.purchaseAmount.toLocaleString('en-IN')],
-                ['Total Sales', metrics.saleWeight.toFixed(2), metrics.saleAmount.toLocaleString('en-IN')],
-                ['Active Stock', metrics.activeStockWeight.toFixed(2), metrics.activeStockAmount.toLocaleString('en-IN')]
+                ['Total Purchase', metrics.purchaseWeight.toFixed(2)],
+                ['Total Sales', metrics.saleWeight.toFixed(2)],
+                ['Active Stock', metrics.activeStockWeight.toFixed(2)]
             ],
             theme: 'grid',
             headStyles: { fillColor: [41, 128, 185] }
@@ -586,7 +707,7 @@ const Reports = () => {
         doc.text("Purchase History", 14, (doc.lastAutoTable?.finalY || 35) + 10);
         autoTable(doc, {
             startY: (doc.lastAutoTable?.finalY || 35) + 15,
-            head: [['Date', 'Container', 'Firm', 'Item Name', 'Weight', 'Amount']],
+            head: [['Date', 'Container', 'Firm', 'Item Name', 'Weight']],
             body: flattenedPurchases.map((p, i) => {
                 const isSame = i > 0 && flattenedPurchases[i - 1].id === p.id;
                 return [
@@ -594,11 +715,10 @@ const Reports = () => {
                     isSame ? '' : p.containerNo,
                     isSame ? '' : p.firm,
                     p.itemName,
-                    p.itemQuantity.toFixed(2),
-                    p.itemAmount.toLocaleString('en-IN')
+                    p.itemQuantity.toFixed(2)
                 ];
             }),
-            foot: [['TOTAL', '', '', '', metrics.purchaseWeight.toFixed(2), metrics.purchaseAmount.toLocaleString('en-IN')]],
+            foot: [['TOTAL', '', '', '', metrics.purchaseWeight.toFixed(2)]],
             theme: 'striped',
             styles: { fontSize: 8 },
             headStyles: { fillColor: [52, 73, 94] },
@@ -796,32 +916,106 @@ const Reports = () => {
                 {/* Right Side Controls */}
                 <div className="flex flex-col md:flex-row items-center gap-3 w-full xl:w-auto">
 
-                    {/* Date Selection */}
+                    {/* Date/Month Policy Toggle */}
+                    <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+                        <button
+                            onClick={() => setFilterType('month')}
+                            className={`px-3 py-1 text-[10px] uppercase font-bold rounded-md transition-all ${filterType === 'month' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+                        >
+                            Monthly
+                        </button>
+                        <button
+                            onClick={() => setFilterType('date')}
+                            className={`px-3 py-1 text-[10px] uppercase font-bold rounded-md transition-all ${filterType === 'date' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+                        >
+                            Custom
+                        </button>
+                    </div>
+
+                    {/* Dynamic Date Selection */}
                     <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1.5 shadow-sm hover:border-blue-300 transition-colors w-full md:w-auto">
-                        <CustomDatePicker
-                            value={fromDate}
-                            onChange={(e) => setFromDate(e.target.value)}
-                            placeholder="Start"
-                            className="w-24 text-xs font-semibold text-slate-700 border-none outline-none bg-transparent text-center"
-                            isClearable={false}
-                        />
-                        <span className="text-slate-300">→</span>
-                        <CustomDatePicker
-                            value={toDate}
-                            onChange={(e) => setToDate(e.target.value)}
-                            placeholder="End"
-                            className="w-24 text-xs font-semibold text-slate-700 border-none outline-none bg-transparent text-center"
-                            isClearable={false}
-                        />
-                        {(fromDate || toDate) && (
+                        <Calendar size={14} className="text-slate-400 ml-1" />
+                        {filterType === 'month' ? (
+                            <input
+                                type="month"
+                                value={selectedMonth}
+                                onChange={(e) => setSelectedMonth(e.target.value)}
+                                className="text-xs font-semibold text-slate-700 border-none outline-none bg-transparent cursor-pointer"
+                            />
+                        ) : (
+                            <div className="flex items-center gap-1">
+                                <CustomDatePicker
+                                    value={fromDate}
+                                    onChange={(e) => setFromDate(e.target.value)}
+                                    placeholder="Start"
+                                    className="w-20 text-xs font-semibold text-slate-700 border-none outline-none bg-transparent text-center"
+                                    isClearable={false}
+                                />
+                                <span className="text-slate-300">→</span>
+                                <CustomDatePicker
+                                    value={toDate}
+                                    onChange={(e) => setToDate(e.target.value)}
+                                    placeholder="End"
+                                    className="w-20 text-xs font-semibold text-slate-700 border-none outline-none bg-transparent text-center"
+                                    isClearable={false}
+                                />
+                            </div>
+                        )}
+                        {(fromDate || toDate || selectedMonth) && (
                             <button
-                                onClick={() => { setFromDate(''); setToDate(''); }}
+                                onClick={() => {
+                                    setFromDate('');
+                                    setToDate('');
+                                    setSelectedMonth(new Date().toISOString().slice(0, 7));
+                                }}
                                 className="p-1 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-full transition-colors ml-1"
-                                title="Clear Dates"
+                                title="Reset Dates"
                             >
                                 <X size={14} />
                             </button>
                         )}
+                    </div>
+
+                    {/* Item Type (Category) Filter */}
+                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5 shadow-sm hover:border-blue-300 transition-colors w-full md:w-auto">
+                        <Filter size={14} className="text-slate-400" />
+                        <select
+                            value={selectedItemType}
+                            onChange={(e) => setSelectedItemType(e.target.value)}
+                            className="text-xs font-semibold text-slate-700 border-none outline-none bg-transparent focus:ring-0 cursor-pointer min-w-[100px]"
+                        >
+                            {itemTypes.map(type => (
+                                <option key={type} value={type}>{type === 'All' ? 'All Item Types' : type}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Scrap Type (Item Name) Filter */}
+                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5 shadow-sm hover:border-blue-300 transition-colors w-full md:w-auto">
+                        <Filter size={14} className="text-slate-400" />
+                        <select
+                            value={selectedItemName}
+                            onChange={(e) => setSelectedItemName(e.target.value)}
+                            className="text-xs font-semibold text-slate-700 border-none outline-none bg-transparent focus:ring-0 cursor-pointer min-w-[100px]"
+                        >
+                            {scrapTypes.map(type => (
+                                <option key={type} value={type}>{type === 'All' ? 'All Scrap Types' : type}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Assortment (Remarks) Filter */}
+                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5 shadow-sm hover:border-blue-300 transition-colors w-full md:w-auto">
+                        <Filter size={14} className="text-slate-400" />
+                        <select
+                            value={selectedAssortment}
+                            onChange={(e) => setSelectedAssortment(e.target.value)}
+                            className="text-xs font-semibold text-slate-700 border-none outline-none bg-transparent focus:ring-0 cursor-pointer min-w-[100px]"
+                        >
+                            {assortmentTypes.map(type => (
+                                <option key={type} value={type}>{type === 'All' ? 'All Assortments' : type}</option>
+                            ))}
+                        </select>
                     </div>
 
                     <div className="hidden md:block w-px h-8 bg-slate-200 mx-1"></div>
@@ -874,7 +1068,7 @@ const Reports = () => {
             {activeTab === 'overview' && (
                 <div className="space-y-6">
                     {/* KPI Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         <KPICard
                             title="Total Purchase"
                             value={metrics.purchaseWeight}
@@ -898,13 +1092,6 @@ const Reports = () => {
                             icon={Box}
                             color="orange"
                             onClick={() => setKpiModal({ type: 'stock', title: 'Current Stock Breakdown', data: stockData })}
-                        />
-                        <KPICard
-                            title="Purchase Value"
-                            value={metrics.purchaseAmount}
-                            icon={IndianRupee}
-                            color="indigo"
-                            onClick={() => setKpiModal({ type: 'purchase', title: 'Detailed Purchase History', data: filteredContainers })}
                         />
                         <KPICard
                             title="Sales Value"
@@ -1023,7 +1210,7 @@ const Reports = () => {
                         <div className="text-right">
                             <div className="text-sm font-bold text-slate-700">Total Purchase</div>
                             <div className="text-xs text-slate-500">
-                                {metrics.purchaseWeight.toFixed(2)} kg • {metrics.purchaseAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}
+                                {metrics.purchaseWeight.toFixed(2)} kg
                             </div>
                         </div>
                     </div>
@@ -1053,7 +1240,7 @@ const Reports = () => {
                                                 </div>
                                                 <div className="text-right">
                                                     <div className="font-mono font-bold text-slate-700">{group.totalWeight.toFixed(2)} <span className="text-xs text-slate-400 font-sans">kg</span></div>
-                                                    <div className="text-xs font-mono text-emerald-600">{group.totalAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })}</div>
+
                                                 </div>
                                             </div>
 
@@ -1069,7 +1256,6 @@ const Reports = () => {
                                                                     <th className="px-4 py-3">Item Name</th>
                                                                     <th className="px-4 py-3 text-right">Assortment</th>
                                                                     <th className="px-4 py-3 text-right">Net Weight</th>
-                                                                    <th className="px-4 py-3 text-right">Amount</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody className="divide-y divide-slate-100">
@@ -1091,9 +1277,6 @@ const Reports = () => {
                                                                             </td>
                                                                             <td className="px-4 py-2 text-right font-mono font-bold text-slate-700">
                                                                                 {p.itemQuantity.toFixed(2)}
-                                                                            </td>
-                                                                            <td className="px-4 py-2 text-right font-mono text-slate-600">
-                                                                                {p.itemAmount.toLocaleString('en-IN')}
                                                                             </td>
                                                                         </tr>
                                                                     );
@@ -1389,20 +1572,17 @@ const DetailModal = ({ isOpen, onClose, title, data, type }) => {
                 ContainerNo: c.containerNo,
                 Firm: c.firm,
                 AssortmentWgt: c.assortmentWeight || '',
-                NetWeight: (c.items ? c.items.reduce((s, item) => s + (parseFloat(item.quantity) || 0), 0) : 0),
-                Amount: parseFloat(c.totalAmount || 0)
+                NetWeight: (c.items ? c.items.reduce((s, item) => s + (parseFloat(item.quantity) || 0), 0) : 0)
             }));
 
             // Add Total Row
             const totalWeight = excelData.reduce((sum, row) => sum + row.NetWeight, 0);
-            const totalAmount = excelData.reduce((sum, row) => sum + row.Amount, 0);
             excelData.push({
                 Date: 'TOTAL',
                 ContainerNo: '',
                 Firm: '',
                 AssortmentWgt: '',
-                NetWeight: totalWeight,
-                Amount: totalAmount
+                NetWeight: totalWeight
             });
 
             ws = XLSX.utils.json_to_sheet(excelData);
@@ -1467,19 +1647,17 @@ const DetailModal = ({ isOpen, onClose, title, data, type }) => {
         let body = [];
 
         if (type === 'purchase') {
-            headers = [['Date', 'Container', 'Firm', 'Weight', 'Amount']];
+            headers = [['Date', 'Container', 'Firm', 'Weight']];
             body = data.map(c => [
                 formatDate(c.date),
                 c.containerNo,
                 c.firm,
-                (c.items ? c.items.reduce((s, item) => s + (parseFloat(item.quantity) || 0), 0) : 0).toFixed(2),
-                parseFloat(c.totalAmount || 0).toLocaleString('en-IN')
+                (c.items ? c.items.reduce((s, item) => s + (parseFloat(item.quantity) || 0), 0) : 0).toFixed(2)
             ]);
 
             // Total Row
             const totalWeight = data.reduce((sum, row) => sum + (row.items ? row.items.reduce((s, item) => s + (parseFloat(item.quantity) || 0), 0) : 0), 0);
-            const totalAmount = data.reduce((sum, row) => sum + parseFloat(row.totalAmount || 0), 0);
-            body.push(['TOTAL', '', '', totalWeight.toFixed(2), totalAmount.toLocaleString('en-IN')]);
+            body.push(['TOTAL', '', '', totalWeight.toFixed(2)]);
 
         } else if (type === 'sales') {
             headers = [['Date', 'Invoice', 'Buyer', 'Weight', 'Amount']];

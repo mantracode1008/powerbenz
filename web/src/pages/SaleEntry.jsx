@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { getItems, getSales, createSale, updateSale, deleteSale, getAvailableContainers, getUniqueValues, api } from '../services/api';
 import { formatDate } from '../utils/dateUtils';
 import CustomDatePicker from '../components/CustomDatePicker';
@@ -56,6 +56,14 @@ const SaleEntry = () => {
 
     // MODALS
     const [modalConfig, setModalConfig] = useState({ isOpen: false, title: '', message: '', onConfirm: () => { } });
+    const [expandedInvoices, setExpandedInvoices] = useState({});
+
+    const toggleInvoice = (invoiceNo) => {
+        setExpandedInvoices(prev => ({
+            ...prev,
+            [invoiceNo]: !prev[invoiceNo]
+        }));
+    };
 
     useEffect(() => {
         fetchInitialData();
@@ -212,13 +220,8 @@ const SaleEntry = () => {
             if (item.id !== cartId) return item;
 
             // Logic: Add/Update specific allocation
-            // We need to map the 'allocateQty' to specific subItems in the group (FIFO within group)
+            // We allow allocation to exceed theoretical stock to handle "Weight Gain" (Increasexed data)
             let remainingToAlloc = parseFloat(allocateQty);
-
-            // Enforce limit: Cannot allocate more than available in this container group
-            if (remainingToAlloc > group.totalQty) {
-                remainingToAlloc = group.totalQty;
-            }
 
             let newSource = [...item.sourceContainers];
 
@@ -230,7 +233,6 @@ const SaleEntry = () => {
                 const sortedSub = [...group.distinctItems].sort((a, b) => (a.id > b.id ? 1 : -1));
 
                 for (const sub of sortedSub) {
-                    if (remainingToAlloc <= 0.001) break;
                     const available = parseFloat(sub.remainingQuantity);
                     const take = Math.min(available, remainingToAlloc);
 
@@ -242,20 +244,31 @@ const SaleEntry = () => {
                         });
                         remainingToAlloc -= take;
                     }
+                    if (remainingToAlloc <= 0.001) break;
+                }
+
+                // IF there is still remainingToAlloc, it means it's a "Weight Gain"
+                if (remainingToAlloc > 0.1) {
+                    const lastSub = sortedSub[sortedSub.length - 1];
+                    const lastAlloc = newSource.find(sc => sc.containerItemId === lastSub.id && sc.containerNo === group.containerNo);
+                    if (lastAlloc) {
+                        lastAlloc.quantity += remainingToAlloc;
+                    } else {
+                        newSource.push({
+                            containerItemId: lastSub.id,
+                            quantity: remainingToAlloc,
+                            containerNo: group.containerNo
+                        });
+                    }
                 }
             }
 
-            // Update Total Quantity based on allocation? 
-            // Ideally User types Total Qty, and then optionally selects containers.
-            // OR User selects containers and Total Qty updates.
-            // Let's go with: User sets Total Qty Manually normally. 
-            // If they use Breakdown, we update Total Qty to match allocation sum.
             const totalAllocated = parseFloat(newSource.reduce((ppt, curr) => ppt + curr.quantity, 0).toFixed(3));
 
             return {
                 ...item,
                 sourceContainers: newSource,
-                quantity: totalAllocated > 0 ? totalAllocated : item.quantity, // Auto update qty if allocating
+                quantity: totalAllocated > 0 ? totalAllocated : item.quantity,
                 amount: (totalAllocated > 0 ? totalAllocated : (parseFloat(item.quantity) || 0)) * (parseFloat(item.rate) || 0)
             };
         }));
@@ -1081,7 +1094,14 @@ const SaleEntry = () => {
                                                                 <div key={group.containerNo} className={`bg-white p-3 rounded-lg border ${allocated > 0 ? 'border-blue-500 ring-1 ring-blue-500/20' : 'border-slate-200'} cursor-pointer hover:border-blue-400 transition-all`}>
                                                                     <div className="flex justify-between items-center mb-2">
                                                                         <span className="text-[10px] font-bold bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">#{group.containerNo}</span>
-                                                                        <span className="text-[10px] text-emerald-600 font-bold">{group.totalQty.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}kg</span>
+                                                                        <div className="flex flex-col items-end">
+                                                                            <span className={`text-[10px] font-black ${allocated > group.totalQty ? 'text-emerald-500' : 'text-slate-600'}`}>
+                                                                                {group.totalQty.toFixed(2)}kg
+                                                                            </span>
+                                                                            {allocated > group.totalQty && (
+                                                                                <span className="text-[8px] font-black bg-emerald-100 text-emerald-700 px-1 rounded animate-pulse">GAIN</span>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
                                                                     <input
                                                                         type="number"
@@ -1295,58 +1315,148 @@ const SaleEntry = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100">
-                                    {getFilteredHistory().map((sale, i, arr) => {
-                                        // Check if Previous Item belongs to same Invoice
-                                        const isSameInvoice = i > 0 && arr[i - 1].invoiceNo === sale.invoiceNo;
+                                    {(() => {
+                                        const filtered = getFilteredHistory();
+                                        const grouped = [];
+                                        let lastInv = null;
+                                        filtered.forEach(s => {
+                                            if (s.invoiceNo !== lastInv) {
+                                                grouped.push({
+                                                    invoiceNo: s.invoiceNo,
+                                                    date: s.date,
+                                                    buyerName: s.buyerName,
+                                                    remarks: s.remarks,
+                                                    items: [s],
+                                                    totalQty: parseFloat(s.quantity) || 0,
+                                                    totalAmount: parseFloat(s.totalAmount) || 0
+                                                });
+                                                lastInv = s.invoiceNo;
+                                            } else {
+                                                const group = grouped[grouped.length - 1];
+                                                group.items.push(s);
+                                                group.totalQty += parseFloat(s.quantity) || 0;
+                                                group.totalAmount += parseFloat(s.totalAmount) || 0;
+                                            }
+                                        });
 
-                                        return (
-                                            <tr key={i} className={`hover:bg-slate-50/80 transition-colors ${!isSameInvoice ? 'border-t-2 border-slate-200' : 'border-t border-slate-100'}`}>
-                                                <td className="px-6 py-3 font-mono text-slate-500 whitespace-nowrap">
-                                                    {!isSameInvoice && formatDate(sale.date)}
-                                                </td>
-                                                <td className="px-6 py-3 font-medium text-slate-800">
-                                                    {!isSameInvoice && sale.invoiceNo}
-                                                </td>
-                                                <td className="px-6 py-3 text-slate-600">
-                                                    {!isSameInvoice && sale.buyerName}
-                                                </td>
-                                                <td className="px-6 py-3 text-slate-500 italic">
-                                                    {!isSameInvoice && (sale.remarks || '-')}
-                                                </td>
-                                                <td className="px-6 py-3 text-slate-600 text-xs">{getContainerInfo(sale)}</td>
-                                                <td className="px-6 py-3 font-medium text-blue-600">{sale.itemName}</td>
-                                                <td className="px-6 py-3 text-right font-bold text-slate-700">{parseFloat(sale.quantity).toLocaleString()}</td>
-                                                <td className="px-6 py-3 text-right text-slate-500">{parseFloat(sale.rate).toFixed(2)}</td>
-                                                <td className="px-6 py-3 text-right font-bold text-emerald-600">{parseFloat(sale.totalAmount).toLocaleString()}</td>
-                                                <td className="px-6 py-3 text-center flex items-center justify-center gap-2">
-                                                    <button
-                                                        onClick={() => handleDownloadHistoryInvoice(sale)}
-                                                        className="text-slate-400 hover:text-green-600 transition-colors p-2 rounded-full hover:bg-green-50"
-                                                        title="Download Invoice"
+                                        if (grouped.length === 0) {
+                                            return <tr><td colSpan={10} className="text-center py-12 text-slate-400">No records found</td></tr>;
+                                        }
+
+                                        return grouped.map((group) => {
+                                            const isExpanded = expandedInvoices[group.invoiceNo];
+                                            return (
+                                                <React.Fragment key={group.invoiceNo}>
+                                                    {/* Summary Row */}
+                                                    <tr
+                                                        onClick={() => toggleInvoice(group.invoiceNo)}
+                                                        className={`cursor-pointer transition-colors border-t-2 border-slate-200 ${isExpanded ? 'bg-indigo-50/30' : 'hover:bg-slate-50'}`}
                                                     >
-                                                        <Download size={16} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleEdit(sale)}
-                                                        className="text-slate-400 hover:text-blue-600 transition-colors p-2 rounded-full hover:bg-blue-50"
-                                                        title="Edit Sale"
-                                                    >
-                                                        <Pencil size={16} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDelete(sale._id || sale.id)}
-                                                        className="text-slate-400 hover:text-red-600 transition-colors p-2 rounded-full hover:bg-red-50"
-                                                        title="Delete Sale"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        );
-                                    })}
-                                    {getFilteredHistory().length === 0 && (
-                                        <tr><td colSpan={10} className="text-center py-12 text-slate-400">No records found</td></tr>
-                                    )}
+                                                        <td className="px-6 py-4 font-mono text-slate-500 whitespace-nowrap">
+                                                            {formatDate(group.date)}
+                                                        </td>
+                                                        <td className="px-6 py-4">
+                                                            <div className="flex items-center gap-2">
+                                                                <div className={`p-1 rounded-md transition-transform duration-200 ${isExpanded ? 'bg-indigo-100 text-indigo-600 rotate-180' : 'bg-slate-100 text-slate-400'}`}>
+                                                                    <ChevronDown size={14} />
+                                                                </div>
+                                                                <span className="font-bold text-indigo-600">{group.invoiceNo}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-6 py-4 font-bold text-slate-800">
+                                                            {group.buyerName}
+                                                        </td>
+                                                        <td className="px-6 py-4 text-slate-500 italic">
+                                                            {group.remarks || '-'}
+                                                        </td>
+                                                        <td className="px-6 py-4 text-slate-500 text-xs">
+                                                            {group.items.length} {group.items.length === 1 ? 'Item' : 'Items'}
+                                                        </td>
+                                                        <td className="px-6 py-4 text-slate-400 italic text-xs">
+                                                            Click to {isExpanded ? 'hide' : 'view'} details
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right font-bold text-slate-700">
+                                                            {group.totalQty.toLocaleString()}
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right text-slate-400">-</td>
+                                                        <td className="px-6 py-4 text-right font-black text-emerald-600">
+                                                            {group.totalAmount.toLocaleString()}
+                                                        </td>
+                                                        <td className="px-6 py-4 text-center">
+                                                            <div className="flex items-center justify-center gap-1" onClick={e => e.stopPropagation()}>
+                                                                <button
+                                                                    onClick={() => handleDownloadHistoryInvoice(group.items[0])}
+                                                                    className="text-slate-400 hover:text-green-600 p-2 rounded-full hover:bg-green-50 transition-colors"
+                                                                    title="Download Invoice"
+                                                                >
+                                                                    <Download size={16} />
+                                                                </button>
+                                                                {group.items.length === 1 && (
+                                                                    <>
+                                                                        <button
+                                                                            onClick={() => handleEdit(group.items[0])}
+                                                                            className="text-slate-400 hover:text-blue-600 p-2 rounded-full hover:bg-blue-50 transition-colors"
+                                                                            title="Edit Sale"
+                                                                        >
+                                                                            <Pencil size={16} />
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => handleDelete(group.items[0]._id || group.items[0].id)}
+                                                                            className="text-slate-400 hover:text-red-600 p-2 rounded-full hover:bg-red-50 transition-colors"
+                                                                            title="Delete Sale"
+                                                                        >
+                                                                            <Trash2 size={16} />
+                                                                        </button>
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+
+                                                    {/* Detail Rows */}
+                                                    {isExpanded && group.items.map((sale, idx) => (
+                                                        <tr key={`${group.invoiceNo}-${idx}`} className="bg-slate-50/50 hover:bg-white transition-colors border-t border-slate-100">
+                                                            <td className="px-6 py-3" colSpan={4}></td>
+                                                            <td className="px-6 py-3 text-slate-500 text-[11px] leading-tight">
+                                                                <span className="font-bold text-slate-400 uppercase text-[9px] block mb-0.5">Container</span>
+                                                                {getContainerInfo(sale)}
+                                                            </td>
+                                                            <td className="px-6 py-3 font-medium text-blue-600">
+                                                                {sale.itemName}
+                                                            </td>
+                                                            <td className="px-6 py-3 text-right font-mono text-slate-600">
+                                                                {parseFloat(sale.quantity).toLocaleString()}
+                                                            </td>
+                                                            <td className="px-6 py-3 text-right font-mono text-slate-400">
+                                                                {parseFloat(sale.rate).toFixed(2)}
+                                                            </td>
+                                                            <td className="px-6 py-3 text-right font-mono font-bold text-emerald-500">
+                                                                {parseFloat(sale.totalAmount).toLocaleString()}
+                                                            </td>
+                                                            <td className="px-6 py-3 text-center">
+                                                                <div className="flex items-center justify-center gap-1">
+                                                                    <button
+                                                                        onClick={() => handleEdit(sale)}
+                                                                        className="text-slate-300 hover:text-blue-600 p-1.5 rounded-full hover:bg-blue-50 transition-colors"
+                                                                        title="Edit Item"
+                                                                    >
+                                                                        <Pencil size={14} />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleDelete(sale._id || sale.id)}
+                                                                        className="text-slate-300 hover:text-red-600 p-1.5 rounded-full hover:bg-red-50 transition-colors"
+                                                                        title="Delete Item"
+                                                                    >
+                                                                        <Trash2 size={14} />
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </React.Fragment>
+                                            );
+                                        });
+                                    })()}
                                 </tbody>
                             </table>
                         </div>

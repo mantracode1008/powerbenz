@@ -11,7 +11,7 @@ import autoTable from 'jspdf-autotable';
 
 const ItemSummary = () => {
     const { user } = useAuth();
-    const canViewRates = user?.role === 'Admin' || user?.permissions?.includes('/rates');
+    const canViewRates = false; // Purchase Value/Stock Value HIDDEN as per client request
 
     const [items, setItems] = useState([]);
     const [columns, setColumns] = useState([]);
@@ -1010,11 +1010,8 @@ const ItemSummary = () => {
                                                         <td className="px-6 py-3 text-right font-mono text-xs text-slate-500">
                                                             {(() => {
                                                                 const qty = parseFloat(row.quantity || row.netWeight) || 0;
-                                                                // Actual % uses Assortment Weight (Sum of items)
                                                                 const totalAssortment = parseFloat(row.Container?.assortmentWeight || row.container?.assortmentWeight) || 0;
-                                                                // Fallback to containerWeight if assortment is missing/zero (though ideally they differ)
                                                                 const denominator = totalAssortment > 0 ? totalAssortment : (parseFloat(row.Container?.containerWeight || row.container?.containerWeight) || 0);
-
                                                                 return denominator > 0 ? ((qty / denominator) * 100).toFixed(2) + '%' : '-';
                                                             })()}
                                                         </td>

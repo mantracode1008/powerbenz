@@ -1144,12 +1144,12 @@ const ContainerSummary = ({ viewMode = 'summary', groupByDate = false }) => {
                                                                 <span className="text-slate-900 font-bold text-sm">{parseFloat(qty).toFixed(2)}</span>
                                                                 {pctExpected && (
                                                                     <span className="text-[10px] text-amber-600 font-medium tracking-tight bg-amber-50 px-1 rounded-sm whitespace-nowrap" title="Expected % (based on container weight)">
-                                                                        E% {pctExpected}
+                                                                        A% {pctExpected}
                                                                     </span>
                                                                 )}
                                                                 <div className="flex flex-col gap-0.5 mt-0.5">
                                                                     <span className="text-[10px] text-green-600 font-medium tracking-tight bg-green-100 px-1 rounded-sm whitespace-nowrap" title="Actual % (based on sum of items)">
-                                                                        A% {pctActual}
+                                                                        E% {pctActual}
                                                                     </span>
 
                                                                 </div>

@@ -85,9 +85,11 @@ exports.createSale = async (req, res) => {
                 return sum + (isNaN(qty) ? 0 : qty);
             }, 0);
 
+            // STOCK VALIDATION RELAXED:
+            // We allow sales even if theoretical stock is insufficient (Weight Gain).
+            // We only warn in logs if it's a massive discrepancy, or just proceed.
             if (parsedQty > totalAvailable + 0.001) {
-                const diff = parsedQty - totalAvailable;
-                throw new Error(`Insufficient stock for ${itemName}! Available: ${totalAvailable.toFixed(2)}, Requested: ${parsedQty.toFixed(2)} (Missing: ${diff.toFixed(2)})`);
+                console.log(`[INFO] Sale quantity (${parsedQty}) exceeds theoretical stock (${totalAvailable}) for ${itemName}. Treating as Weight Gain.`);
             }
 
             // 3. Determine Allocations
@@ -118,11 +120,9 @@ exports.createSale = async (req, res) => {
                     // If user adds Copper twice, we might have overlap. complex.
                     // Ideally frontend prevents adding same item twice or merges them.
 
-                    if (parseFloat(containerItem.remainingQuantity) + 0.001 < scQty) {
-                        throw new Error(`Insufficient stock in container for ${itemName}.`);
-                    }
-
-                    allocations.push({ containerItem, quantity: scQty });
+                    const currentRem = parseFloat(containerItem.remainingQuantity);
+                    const gain = scQty > currentRem ? scQty - currentRem : 0;
+                    allocations.push({ containerItem, quantity: scQty, gain });
                 }
             } else {
                 // Auto Allocation (FIFO)
@@ -134,6 +134,21 @@ exports.createSale = async (req, res) => {
 
                     allocations.push({ containerItem: item, quantity: allocateQty });
                     remainingToAllocate -= allocateQty;
+                }
+
+                // WEIGHT GAIN HANDLING (AUTO-ALLOC):
+                // If there's still quantity to allocate after exhausting all containers,
+                // add the surplus (GAIN) to the last container item.
+                if (remainingToAllocate > 0.1 && allocations.length > 0) {
+                    const lastAlloc = allocations[allocations.length - 1];
+                    const gain = remainingToAllocate;
+                    lastAlloc.quantity += gain;
+                    lastAlloc.gain = (lastAlloc.gain || 0) + gain;
+                    remainingToAllocate = 0;
+                } else if (remainingToAllocate > 0.1 && allocations.length === 0) {
+                    // This shouldn't happen if totalAvailable logic caught it, 
+                    // but if no items at all exist for this name:
+                    throw new Error(`No stock records found for ${itemName} to apply weight gain.`);
                 }
             }
 
@@ -162,10 +177,18 @@ exports.createSale = async (req, res) => {
                 // We must use atomic decrement or careful management.
                 // Best to decrement DB directly.
 
+                // Calculate gain if not already present on alloc
+                if (alloc.gain === undefined) {
+                    const currentQty = parseFloat(alloc.containerItem.remainingQuantity);
+                    const deductQty = parseFloat(alloc.quantity);
+                    alloc.gain = deductQty > currentQty + 0.001 ? deductQty - currentQty : 0;
+                }
+
                 await SaleAllocation.create({
                     saleId: sale.id,
                     containerItemId: alloc.containerItem.id,
-                    quantity: alloc.quantity
+                    quantity: alloc.quantity,
+                    gain: alloc.gain || 0
                 }, { transaction: t });
 
                 // CRITICAL: We must reload the item or decrement blind to be safe? 
@@ -180,11 +203,33 @@ exports.createSale = async (req, res) => {
                 // Manual arithmetic update to ensure absolute control over stock values
                 const currentQty = parseFloat(alloc.containerItem.remainingQuantity);
                 const deductQty = parseFloat(alloc.quantity);
-                let newQty = currentQty - deductQty;
+
+                // WEIGHT GAIN HANDLING:
+                // If we are deducting more than we have, it's a "Gain"
+                if (deductQty > currentQty + 0.001) {
+                    const gain = deductQty - currentQty;
+                    // Atomically increment the ContainerItem's quantity to reflect this gain
+                    // We also "virtually" increase currentQty so newQty becomes 0
+                    await alloc.containerItem.increment({
+                        quantity: gain,
+                        remainingQuantity: gain
+                    }, { transaction: t });
+
+                    // Log the weight gain adjustment
+                    await logAction(req, 'ADJUST', 'ContainerItem', alloc.containerItem.id, {
+                        message: `Weight gain detected during sale: ${gain.toFixed(3)}kg added to item ${alloc.containerItem.itemName}`,
+                        gain: gain,
+                        saleId: sale.id
+                    });
+
+                    // Update local reference for the following update call
+                    alloc.containerItem.remainingQuantity = parseFloat(alloc.containerItem.remainingQuantity) + gain;
+                }
+
+                let newQty = parseFloat(alloc.containerItem.remainingQuantity) - deductQty;
 
                 // Floating point safety check
-                if (newQty < 0) {
-                    // Should have been caught by validation, but safe guard
+                if (newQty < 0.0001) {
                     newQty = 0;
                 }
 
@@ -301,8 +346,20 @@ exports.deleteSale = async (req, res) => {
         if (sale.allocations && sale.allocations.length > 0) {
             for (const alloc of sale.allocations) {
                 if (alloc.ContainerItem) {
+                    const gain = parseFloat(alloc.gain) || 0;
+                    const restoreQty = parseFloat(alloc.quantity) - gain;
+
+                    // Revert the weight gain if any
+                    if (gain > 0) {
+                        await alloc.ContainerItem.decrement('quantity', {
+                            by: gain,
+                            transaction: t
+                        });
+                    }
+
+                    // Restore remaining stock
                     await alloc.ContainerItem.increment('remainingQuantity', {
-                        by: alloc.quantity,
+                        by: restoreQty,
                         transaction: t
                     });
                 }
@@ -359,8 +416,18 @@ exports.updateSale = async (req, res) => {
         if (sale.allocations && sale.allocations.length > 0) {
             for (const alloc of sale.allocations) {
                 if (alloc.ContainerItem) {
+                    const gain = parseFloat(alloc.gain) || 0;
+                    const restoreQty = parseFloat(alloc.quantity) - gain;
+
+                    if (gain > 0) {
+                        await alloc.ContainerItem.decrement('quantity', {
+                            by: gain,
+                            transaction: t
+                        });
+                    }
+
                     await alloc.ContainerItem.increment('remainingQuantity', {
-                        by: alloc.quantity,
+                        by: restoreQty,
                         transaction: t
                     });
                 }
@@ -412,10 +479,11 @@ exports.updateSale = async (req, res) => {
             return sum + (isNaN(qty) ? 0 : qty);
         }, 0);
 
+        // STOCK VALIDATION RELAXED:
         if (finalQuantity > totalAvailable + 0.001) {
-            const diff = finalQuantity - totalAvailable;
-            throw new Error(`Insufficient stock for update! Available: ${totalAvailable.toFixed(2)}, Requested: ${finalQuantity.toFixed(2)} (Missing: ${diff.toFixed(2)})`);
+            console.log(`[INFO] Update quantity (${finalQuantity}) exceeds theoretical stock (${totalAvailable}) for ${safeItemName}. Treating as Weight Gain.`);
         }
+
 
         // 4. DETERMINE NEW ALLOCATIONS
         let newAllocations = [];
@@ -439,13 +507,17 @@ exports.updateSale = async (req, res) => {
                     throw new Error(`Container item ${sc.containerItemId} not found or has no stock.`);
                 }
 
-                if (parseFloat(containerItem.remainingQuantity) + 0.001 < scQty) {
-                    throw new Error(`Insufficient stock in container ${containerItem.Container?.containerNo}`);
-                }
-
-                newAllocations.push({ containerItem, quantity: scQty });
+                const currentRem = parseFloat(containerItem.remainingQuantity);
+                const gain = scQty > currentRem ? scQty - currentRem : 0;
+                newAllocations.push({ containerItem, quantity: scQty, gain });
                 remainingToAllocate -= scQty;
             }
+
+            // WEIGHT GAIN HANDLING (MANUAL-ALLOC):
+            // If user manually allocated more than total available, 
+            // the surplus is already in newAllocations. The loop above handles it.
+            // We just ensure remainingToAllocate is zeroed for safety if it went negative.
+            if (remainingToAllocate < 0) remainingToAllocate = 0;
         } else {
             // Auto Allocation (FIFO)
             for (const item of availableItems) {
@@ -457,6 +529,15 @@ exports.updateSale = async (req, res) => {
                 newAllocations.push({ containerItem: item, quantity: allocateQty });
                 remainingToAllocate -= allocateQty;
             }
+
+            // WEIGHT GAIN HANDLING (AUTO-ALLOC):
+            if (remainingToAllocate > 0.1 && newAllocations.length > 0) {
+                const lastAlloc = newAllocations[newAllocations.length - 1];
+                const newGain = remainingToAllocate;
+                lastAlloc.quantity += remainingToAllocate;
+                lastAlloc.gain = (lastAlloc.gain || 0) + newGain;
+                remainingToAllocate = 0;
+            }
         }
 
         // 5. APPLY NEW ALLOCATIONS & DEDUCT STOCK
@@ -464,13 +545,32 @@ exports.updateSale = async (req, res) => {
             await SaleAllocation.create({
                 saleId: sale.id,
                 containerItemId: alloc.containerItem.id,
-                quantity: alloc.quantity
+                quantity: alloc.quantity,
+                gain: alloc.gain || 0
             }, { transaction: t });
 
             const current = parseFloat(alloc.containerItem.remainingQuantity);
             const deduct = parseFloat(alloc.quantity);
+
+            // WEIGHT GAIN HANDLING during Update:
+            if (deduct > current + 0.001) {
+                const gain = deduct - current;
+                await alloc.containerItem.increment({
+                    quantity: gain,
+                    remainingQuantity: gain
+                }, { transaction: t });
+
+                await logAction(req, 'ADJUST', 'ContainerItem', alloc.containerItem.id, {
+                    message: `Weight gain detected during update: ${gain.toFixed(3)}kg added to item ${alloc.containerItem.itemName}`,
+                    gain: gain,
+                    saleId: sale.id
+                });
+                alloc.containerItem.remainingQuantity = parseFloat(alloc.containerItem.remainingQuantity) + gain;
+            }
+
+            const currentUpdated = parseFloat(alloc.containerItem.remainingQuantity);
             await alloc.containerItem.update({
-                remainingQuantity: Math.max(0, current - deduct)
+                remainingQuantity: Math.max(0, currentUpdated - deduct)
             }, { transaction: t });
         }
 
