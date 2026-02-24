@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
-import { Shield, Clock, Search, RefreshCw, AlertCircle, X } from 'lucide-react';
+import { Shield, Clock, Search, RefreshCw, AlertCircle, X, ChevronDown } from 'lucide-react';
 
 import { useLocation } from 'react-router-dom';
 
@@ -10,6 +10,7 @@ const AuditLogs = () => {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState(location.state?.searchFilter || '');
     const [error, setError] = useState(null);
+    const abortControllerRef = React.useRef(null);
 
     useEffect(() => {
         const initialQuery = location.state?.searchFilter || '';
@@ -17,20 +18,35 @@ const AuditLogs = () => {
             setSearchTerm(initialQuery);
         }
         fetchLogs(initialQuery);
+
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+        };
     }, [location.state]);
 
     const fetchLogs = async (query = '') => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        abortControllerRef.current = new AbortController();
+
         setLoading(true);
         setError(null);
         try {
             const params = {};
-            // If query is provided, use it. If not, check if searchTerm state exists (optional, mostly for refresh)
             const searchQuery = typeof query === 'string' ? query : searchTerm;
             if (searchQuery) params.search = searchQuery;
 
-            const res = await api.get('/logs', { params });
+            const res = await api.get('/logs', {
+                params,
+                signal: abortControllerRef.current.signal
+            });
             setLogs(res.data);
         } catch (error) {
+            if (error.name === 'CanceledError' || error.name === 'AbortError') return;
+
             console.error('Failed to fetch logs', error);
             if (error.response && error.response.status === 403) {
                 setError('Access Denied: You do not have permission to view audit logs.');
@@ -38,7 +54,9 @@ const AuditLogs = () => {
                 setError('Failed to load logs. Please try again.');
             }
         } finally {
-            setLoading(false);
+            if (!abortControllerRef.current?.signal.aborted) {
+                setLoading(false);
+            }
         }
     };
 
@@ -54,7 +72,33 @@ const AuditLogs = () => {
 
     const [selectedLog, setSelectedLog] = useState(null);
 
-    // Removed client-side filtering in favor of server-side search
+    const formatDetails = (details) => {
+        if (!details) return '-';
+        if (typeof details === 'object') return JSON.stringify(details, null, 4);
+        try {
+            const parsed = JSON.parse(details);
+            return JSON.stringify(parsed, null, 4);
+        } catch (e) {
+            return details;
+        }
+    };
+
+    const getDetailSummary = (details) => {
+        if (!details) return '-';
+        let data = details;
+        try {
+            if (typeof details === 'string') data = JSON.parse(details);
+        } catch (e) { return details; }
+
+        if (typeof data === 'object') {
+            if (data.message) return data.message;
+            if (data.action) return data.action;
+            // Fallback: stringify first few keys
+            const keys = Object.keys(data).slice(0, 2);
+            return keys.map(k => `${k}: ${data[k]}`).join(', ');
+        }
+        return details;
+    };
 
     return (
         <div className="space-y-6">
@@ -93,13 +137,13 @@ const AuditLogs = () => {
                     <table className="w-full text-left border-collapse">
                         <thead>
                             <tr className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold">
-                                <th className="p-4">Time</th>
-                                <th className="p-4">User</th>
-                                <th className="p-4">Action</th>
-                                <th className="p-4">Type</th>
-                                <th className="p-4">Details</th>
-                                <th className="p-4">IP Address</th>
-                                <th className="p-4">Actions</th>
+                                <th className="p-4 whitespace-nowrap">Time</th>
+                                <th className="p-4 whitespace-nowrap">User</th>
+                                <th className="p-4 whitespace-nowrap">Action</th>
+                                <th className="p-4 hidden md:table-cell whitespace-nowrap">Type</th>
+                                <th className="p-4 hidden lg:table-cell whitespace-nowrap">Details & Summary</th>
+                                <th className="p-4 hidden xl:table-cell whitespace-nowrap">IP Address</th>
+                                <th className="p-4 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -116,15 +160,20 @@ const AuditLogs = () => {
                                 </tr>
                             ) : logs.length === 0 ? (
                                 <tr>
-                                    <td colSpan="7" className="p-8 text-center text-slate-500">No logs found.</td>
+                                    <td colSpan="7" className="p-8 text-center text-slate-500 py-12">
+                                        <div className="flex flex-col items-center gap-2">
+                                            <Shield size={40} className="text-slate-200" />
+                                            <p className="font-medium">No logs found.</p>
+                                        </div>
+                                    </td>
                                 </tr>
                             ) : (
                                 logs.map(log => (
                                     <tr key={log.id} className="hover:bg-slate-50 transition-colors text-sm">
-                                        <td className="p-4 text-slate-500 whitespace-nowrap">
+                                        <td className="p-4 text-slate-500 whitespace-nowrap font-mono text-[11px]">
                                             {new Date(log.createdAt).toLocaleString()}
                                         </td>
-                                        <td className="p-4 font-medium text-slate-800">
+                                        <td className="p-4 font-semibold text-slate-800 whitespace-nowrap">
                                             {log.staffName || 'Unknown'}
                                         </td>
                                         <td className="p-4">
@@ -135,19 +184,19 @@ const AuditLogs = () => {
                                                 {log.action}
                                             </span>
                                         </td>
-                                        <td className="p-4 text-slate-600">{log.entityType}</td>
-                                        <td className="p-4 text-slate-500 max-w-xs truncate" title={log.details}>
-                                            {log.details ? (log.details.length > 30 ? log.details.substring(0, 30) + '...' : log.details) : '-'}
+                                        <td className="p-4 text-slate-600 hidden md:table-cell">{log.entityType}</td>
+                                        <td className="p-4 text-slate-500 max-w-sm truncate hidden lg:table-cell" title={log.details}>
+                                            <div className="font-medium text-slate-600 truncate">{getDetailSummary(log.details)}</div>
                                         </td>
-                                        <td className="p-4 text-slate-400 text-xs font-mono">
+                                        <td className="p-4 text-slate-400 text-xs font-mono hidden xl:table-cell">
                                             {log.ipAddress || '-'}
                                         </td>
-                                        <td className="p-4">
+                                        <td className="p-4 text-right">
                                             <button
                                                 onClick={() => setSelectedLog(log)}
-                                                className="text-blue-600 hover:text-blue-800 text-xs font-medium"
+                                                className="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-bold transition-all"
                                             >
-                                                View
+                                                Details
                                             </button>
                                         </td>
                                     </tr>
@@ -208,8 +257,8 @@ const AuditLogs = () => {
                                 <div className="flex-1 p-0 overflow-hidden relative">
                                     <textarea
                                         readOnly
-                                        className="w-full h-full p-6 font-mono text-sm text-slate-700 resize-none focus:outline-none bg-slate-50"
-                                        value={typeof selectedLog.details === 'object' ? JSON.stringify(selectedLog.details, null, 4) : selectedLog.details}
+                                        className="w-full h-full p-6 font-mono text-sm text-slate-700 resize-none focus:outline-none bg-slate-50 scrollbar-hide"
+                                        value={formatDetails(selectedLog.details)}
                                     />
                                 </div>
                             </div>

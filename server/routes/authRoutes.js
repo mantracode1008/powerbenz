@@ -62,7 +62,11 @@ router.post('/register', async (req, res) => {
         console.log('[AUTH] Registration Successful:', email);
 
         // Log to DB (Async, don't block response)
-        logAction({ user: staff, headers: req.headers, socket: req.socket }, 'REGISTER', 'Auth', staff.id, { email });
+        logAction({ user: staff, headers: req.headers, socket: req.socket }, 'REGISTER', 'Auth', staff.id, {
+            message: `New staff member registered: ${staff.name}`,
+            email: staff.email,
+            workerNo: staff.workerNo
+        });
 
         res.status(201).json({
             message: 'Registration successful',
@@ -159,7 +163,11 @@ router.post('/login', async (req, res) => {
         );
 
         // console.log('[AUTH] Login Successful:', staff.name);
-        logAction({ user: staff, headers: req.headers, socket: req.socket }, 'LOGIN', 'Auth', staff.id, { method: userId ? 'PIN' : 'Password' });
+        logAction({ user: staff, headers: req.headers, socket: req.socket }, 'LOGIN', 'Auth', staff.id, {
+            message: `User logged in using ${pin ? 'PIN' : 'Password'}`,
+            userName: staff.name,
+            authMethod: pin ? 'PIN' : 'Password'
+        });
 
         res.json({
             message: 'Login successful',

@@ -26,7 +26,8 @@ router.get('/stats', async (req, res) => {
             items: [],
             stock: [],
             salesByItem: [],
-            distribution: []
+            distribution: [],
+            scrapType: []
         }
     };
 
@@ -161,6 +162,15 @@ router.get('/stats', async (req, res) => {
             ORDER BY "value" DESC
         `, { type: sequelize.QueryTypes.SELECT });
 
+        const pScrapType = sequelize.query(`
+            SELECT COALESCE(c.${C('remarks')}, 'Other') as "name", SUM(ci.${C('remainingQuantity')}) as "value"
+            FROM ${T_ContainerItems} ci
+            JOIN ${tableName('Containers')} c ON ci.${C('containerId')} = c.${C('id')}
+            GROUP BY COALESCE(c.${C('remarks')}, 'Other')
+            HAVING SUM(ci.${C('remainingQuantity')}) > 0.001
+            ORDER BY "value" DESC
+        `, { type: sequelize.QueryTypes.SELECT });
+
         const pTopBuyers = Sale.findAll({
             attributes: [
                 ['buyerName', 'name'],
@@ -212,7 +222,8 @@ router.get('/stats', async (req, res) => {
             topBuyersData,
             topFirmsData,
             totalBuyers,
-            totalStockValueRes // Result for stock value
+            totalStockValueRes, // Result for stock value
+            scrapTypeData
         ] = await Promise.all([
             runSafe(() => pTotalAmount, 0),
             runSafe(() => pTotalContainers, 0),
@@ -229,7 +240,8 @@ router.get('/stats', async (req, res) => {
             runSafe(() => pTopBuyers, []),
             runSafe(() => pTopFirms, []),
             runSafe(() => Sale.count({ distinct: true, col: 'buyerName' }), 0),
-            runSafe(() => pTotalStockValue, [{ totalValue: 0 }])
+            runSafe(() => pTotalStockValue, [{ totalValue: 0 }]),
+            runSafe(() => pScrapType, [])
         ]);
 
         // Process Results for Cards (Unchanged)
@@ -330,6 +342,12 @@ router.get('/stats', async (req, res) => {
         response.charts.distribution = distributionData.map(d => ({
             ...d,
             sharePercent: totalStockVal > 0 ? parseFloat(((d.value / totalStockVal) * 100).toFixed(1)) : 0
+        }));
+
+        // 3. Scrap Type Distribution
+        response.charts.scrapType = (scrapTypeData || []).map(d => ({
+            name: d.name || 'Other',
+            value: parseFloat(d.value) || 0
         }));
 
         // MASK FINANCIAL DATA IF NOT ADMIN OR NO RATE PERMISSION

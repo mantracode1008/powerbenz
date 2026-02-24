@@ -5,6 +5,7 @@ const CountUp = ({ end, duration = 2000, decimals = 0, prefix = '', suffix = '' 
 
     useEffect(() => {
         let startTime = null;
+        let requestId;
         let startValue = 0;
         const targetValue = parseFloat(end) || 0;
 
@@ -21,13 +22,14 @@ const CountUp = ({ end, duration = 2000, decimals = 0, prefix = '', suffix = '' 
             setCount(current);
 
             if (progress < duration) {
-                requestAnimationFrame(animate);
+                requestId = requestAnimationFrame(animate);
             } else {
                 setCount(targetValue);
             }
         };
 
-        requestAnimationFrame(animate);
+        requestId = requestAnimationFrame(animate);
+        return () => cancelAnimationFrame(requestId);
     }, [end, duration]);
 
     return (

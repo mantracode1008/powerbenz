@@ -16,7 +16,6 @@ router.get('/', async (req, res) => {
     try {
         const { search, limit } = req.query;
         const { Op } = require('sequelize');
-
         const whereClause = {};
 
         if (search) {

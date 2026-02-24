@@ -131,6 +131,7 @@ app.use('/api/dashboard', auth, dashboardRoutes);
 app.use('/api/sales', auth, saleRoutes);
 app.use('/api/firms', auth, firmRoutes);
 app.use('/api/scrap-types', auth, scrapTypeRoutes);
+app.use('/api/logs', auth, auditRoutes);
 app.use('/api', apiRouter);
 app.use('/api/utils', auth, require('./routes/utilRoutes'));
 

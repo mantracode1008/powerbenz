@@ -13,15 +13,17 @@ const useCountUp = (end, duration = 2000) => {
 
     useEffect(() => {
         let startTimestamp = null;
+        let requestId;
         const step = (timestamp) => {
             if (!startTimestamp) startTimestamp = timestamp;
             const progress = Math.min((timestamp - startTimestamp) / duration, 1);
             setCount(Math.floor(progress * end));
             if (progress < 1) {
-                window.requestAnimationFrame(step);
+                requestId = window.requestAnimationFrame(step);
             }
         };
-        window.requestAnimationFrame(step);
+        requestId = window.requestAnimationFrame(step);
+        return () => window.cancelAnimationFrame(requestId);
     }, [end, duration]);
 
     return count;
@@ -300,32 +302,41 @@ const Dashboard = () => {
 
                 {/* Purchase Items Value Chart Removed as per client request */}
 
-                {canViewRates && (
-                    <div className="glass-card p-6 border border-slate-200 bg-white">
-                        <h3 className="text-lg font-bold text-slate-800 mb-6">Top Sold Items by Value</h3>
-                        <div className="h-[300px] w-full">
+                <div className="glass-card p-6 border border-slate-200 bg-white">
+                    <h3 className="text-lg font-bold text-slate-800 mb-6">Stock by Scrap Type</h3>
+                    <div className="h-[300px] w-full">
+                        {charts.scrapType && charts.scrapType.length > 0 ? (
                             <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={charts.salesByItem} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
-                                    <defs>
-                                        <linearGradient id="colorSalesItem" x1="0" y1="0" x2="1" y2="0">
-                                            <stop offset="0%" stopColor="#10b981" stopOpacity={1} />
-                                            <stop offset="100%" stopColor="#059669" stopOpacity={1} />
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e2e8f0" opacity={0.8} />
-                                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                                    <YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                                <PieChart>
+                                    <Pie
+                                        data={charts.scrapType}
+                                        cx="50%"
+                                        cy="50%"
+                                        innerRadius={60}
+                                        outerRadius={100}
+                                        paddingAngle={5}
+                                        dataKey="value"
+                                        nameKey="name"
+                                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                                    >
+                                        {charts.scrapType?.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={COLORS[(index + 3) % COLORS.length]} />
+                                        ))}
+                                    </Pie>
                                     <Tooltip
-                                        cursor={{ fill: 'rgba(0,0,0,0.05)' }}
                                         contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', color: '#1e293b', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                        formatter={(value) => value.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
+                                        formatter={(value) => `${parseFloat(value).toLocaleString('en-IN')} kg`}
                                     />
-                                    <Bar dataKey="value" fill="url(#colorSalesItem)" radius={[0, 4, 4, 0]} barSize={20} name="Sales Value" />
-                                </BarChart>
+                                    <Legend iconType="circle" />
+                                </PieChart>
                             </ResponsiveContainer>
-                        </div>
+                        ) : (
+                            <div className="flex h-full items-center justify-center text-slate-400 text-sm">
+                                No scrap type distribution data available
+                            </div>
+                        )}
                     </div>
-                )}
+                </div>
 
 
 
@@ -370,37 +381,34 @@ const Dashboard = () => {
                     </div>
                 </div>
 
-                <div className="glass-card p-6 border border-slate-200 bg-white">
-                    <h3 className="text-lg font-bold text-slate-800 mb-6">Current Stock Levels</h3>
-                    <div className="h-[300px] w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={charts.stock} margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" opacity={0.8} />
-                                <XAxis
-                                    dataKey="name"
-                                    axisLine={false}
-                                    tickLine={false}
-                                    tick={{ fill: '#64748b', fontSize: 10 }}
-                                    interval={0}
-                                    angle={-45}
-                                    textAnchor="end"
-                                    height={60}
-                                />
-                                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                                <Tooltip
-                                    cursor={{ fill: 'rgba(0,0,0,0.05)' }}
-                                    contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', color: '#1e293b', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                    formatter={(value) => parseFloat(value).toFixed(2)}
-                                />
-                                <Bar dataKey="stock" radius={[6, 6, 0, 0]} barSize={30} name="Stock Quantity">
-                                    {charts.stock?.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
+                {canViewRates && (
+                    <div className="glass-card p-6 border border-slate-200 bg-white">
+                        <h3 className="text-lg font-bold text-slate-800 mb-6">Top Sold Items by Value</h3>
+                        <div className="h-[300px] w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={charts.salesByItem} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
+                                    <defs>
+                                        <linearGradient id="colorSalesItem" x1="0" y1="0" x2="1" y2="0">
+                                            <stop offset="0%" stopColor="#10b981" stopOpacity={1} />
+                                            <stop offset="100%" stopColor="#059669" stopOpacity={1} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#e2e8f0" opacity={0.8} />
+                                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                                    <YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                                    <Tooltip
+                                        cursor={{ fill: 'rgba(0,0,0,0.05)' }}
+                                        contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', color: '#1e293b', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                        formatter={(value) => value.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
+                                    />
+                                    <Bar dataKey="value" fill="url(#colorSalesItem)" radius={[0, 4, 4, 0]} barSize={20} name="Sales Value" />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
                     </div>
-                </div>
+                )}
+
+
             </div>
         </div >
     );

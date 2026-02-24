@@ -24,6 +24,15 @@ const SaleSummary = () => {
     const [filterType, setFilterType] = useState('month'); // 'month', 'date', 'range'
     const [groupByScrapType, setGroupByScrapType] = useState(false);
     const [showExportMenu, setShowExportMenu] = useState(false);
+    const [expandedInvoices, setExpandedInvoices] = useState({});
+
+    const toggleInvoice = (invoiceNo) => {
+        if (!invoiceNo) return;
+        setExpandedInvoices(prev => ({
+            ...prev,
+            [invoiceNo]: !prev[invoiceNo]
+        }));
+    };
 
     useEffect(() => {
         fetchData();
@@ -475,8 +484,19 @@ const SaleSummary = () => {
                                         // Standard mode check for same invoice
                                         const isSame = !groupByScrapType && index > 0 && processedSales[index - 1].invoiceNo === sale.invoiceNo;
 
+                                        // Count items in this invoice for the first row
+                                        let itemCount = 0;
+                                        if (!isSame && !groupByScrapType && sale.invoiceNo) {
+                                            itemCount = processedSales.filter(s => s.invoiceNo === sale.invoiceNo).length;
+                                        }
+
+                                        const isExpanded = expandedInvoices[sale.invoiceNo];
+                                        const shouldHide = !groupByScrapType && isSame && !isExpanded;
+
                                         // Group Header Check
                                         const showGroupHeader = groupByScrapType && (index === 0 || processedSales[index - 1].scrapType !== sale.scrapType);
+
+                                        if (shouldHide) return null;
 
                                         return (
                                             <React.Fragment key={sale._id || index}>
@@ -487,7 +507,7 @@ const SaleSummary = () => {
                                                         </td>
                                                     </tr>
                                                 )}
-                                                <tr className={`hover:bg-slate-50 transition-colors ${!isSame ? 'border-t-2 border-slate-200' : 'border-t border-slate-100'}`}>
+                                                <tr className={`hover:bg-slate-50 transition-colors ${!isSame ? 'border-t-2 border-slate-300' : 'border-t border-slate-100'}`}>
                                                     <td className="px-4 py-2 text-slate-500 whitespace-nowrap">
                                                         {(!isSame || groupByScrapType) && formatDate(sale.date)}
                                                     </td>
@@ -495,15 +515,30 @@ const SaleSummary = () => {
                                                         {(!isSame || groupByScrapType) && sale.buyerName}
                                                     </td>
                                                     <td className="px-4 py-2 text-slate-600">
-                                                        {(!isSame || groupByScrapType) && (sale.invoiceNo || '-')}
+                                                        {(!isSame || groupByScrapType) && (
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-bold">{sale.invoiceNo || '-'}</span>
+                                                                {itemCount > 1 && (
+                                                                    <button
+                                                                        onClick={() => toggleInvoice(sale.invoiceNo)}
+                                                                        className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold transition-all ${isExpanded ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                                                                    >
+                                                                        {isExpanded ? 'Hide' : `+${itemCount - 1} Detail`}
+                                                                        <ChevronDown size={10} className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </td>
                                                     <td className="px-4 py-2 text-slate-600">
-                                                        {sale.itemName}
+                                                        <span className={isSame ? 'pl-4 text-xs opacity-75' : 'font-medium'}>
+                                                            {sale.itemName}
+                                                        </span>
                                                     </td>
                                                     <td className="px-4 py-2 text-slate-500 text-xs">
                                                         {getVehicleNumbers(sale)}
                                                     </td>
-                                                    <td className="px-4 py-2 text-right text-slate-600">
+                                                    <td className="px-4 py-2 text-right text-slate-600 font-medium">
                                                         {parseFloat(sale.quantity).toFixed(2)}
                                                     </td>
                                                     {canViewRates && (
