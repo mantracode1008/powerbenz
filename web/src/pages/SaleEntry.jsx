@@ -570,19 +570,19 @@ const SaleEntry = () => {
         doc.rect(0, 0, 210, 8, 'F'); // Full width header line
 
         // 2. Company Identity (Left) & Invoice Title (Right)
-        try {
-            const logo = await loadImage('/invoice_logo.jpg');
-            // Enlarged Logo (50x40 roughly for the new uploaded image aspect)
-            doc.addImage(logo, 'JPEG', 14, 15, 60, 48);
-        } catch (error) {
-            // Fallback Logo
-            doc.setFillColor(...PRIMARY_COLOR);
-            doc.circle(30, 30, 15, 'F');
-            doc.setTextColor(255, 255, 255);
-            doc.setFontSize(14);
-            doc.setFont("helvetica", "bold");
-            doc.text("PB", 30, 35, { align: "center" });
-        }
+        // try {
+        //     const logo = await loadImage('/invoice_logo.jpg');
+        //     // Enlarged Logo (50x40 roughly for the new uploaded image aspect)
+        //     doc.addImage(logo, 'JPEG', 14, 15, 60, 48);
+        // } catch (error) {
+        //     // Fallback Logo
+        //     doc.setFillColor(...PRIMARY_COLOR);
+        //     doc.circle(30, 30, 15, 'F');
+        //     doc.setTextColor(255, 255, 255);
+        //     doc.setFontSize(14);
+        //     doc.setFont("helvetica", "bold");
+        //     doc.text("PB", 30, 35, { align: "center" });
+        // }
 
         // Company Name (Moved below logo or to side? Left aligned under logo key details)
         doc.setFont("helvetica", "bold");
@@ -595,7 +595,7 @@ const SaleEntry = () => {
         doc.setFontSize(9);
         doc.setTextColor(...TEXT_COLOR);
         doc.text("Surat, GJ 394150", 14, 75);
-        doc.text("info@powerbenz.com", 14, 80);
+        
 
 
 
@@ -627,7 +627,7 @@ const SaleEntry = () => {
             doc.text(value, x, infoY + 13);
         };
 
-        drawLabelValue("INVOICE DATE", formatDate(data.date), 20);
+        drawLabelValue("DATE", formatDate(data.date), 20);
         drawLabelValue("DUE DATE", formatDate(data.date), 70); // Assuming immediate/same day
         drawLabelValue("BROKER / REF", data.remarks || '-', 120);
 
@@ -639,7 +639,7 @@ const SaleEntry = () => {
         doc.setFontSize(10);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(...PRIMARY_COLOR);
-        doc.text("BILL TO", 14, billY);
+        doc.text("ESTIMATE TO", 14, billY);
 
         doc.setDrawColor(200);
         doc.line(14, billY + 2, 100, billY + 2); // Underline
