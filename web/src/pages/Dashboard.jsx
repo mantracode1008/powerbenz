@@ -383,7 +383,7 @@ const Dashboard = () => {
 
                 {canViewRates && (
                     <div className="glass-card p-6 border border-slate-200 bg-white">
-                        <h3 className="text-lg font-bold text-slate-800 mb-6">Top Sold Items by Value</h3>
+                        <h3 className="text-lg font-bold text-slate-800 mb-6">Top Sold Items by Weight</h3>
                         <div className="h-[300px] w-full">
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={charts.salesByItem} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
@@ -399,9 +399,9 @@ const Dashboard = () => {
                                     <Tooltip
                                         cursor={{ fill: 'rgba(0,0,0,0.05)' }}
                                         contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', color: '#1e293b', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                                        formatter={(value) => value.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
+                                        formatter={(value) => `${value.toLocaleString('en-IN')} kg`}
                                     />
-                                    <Bar dataKey="value" fill="url(#colorSalesItem)" radius={[0, 4, 4, 0]} barSize={20} name="Sales Value" />
+                                    <Bar dataKey="value" fill="url(#colorSalesItem)" radius={[0, 4, 4, 0]} barSize={20} name="Sales Weight" />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>

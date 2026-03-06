@@ -147,7 +147,7 @@ router.get('/stats', async (req, res) => {
         `, { type: sequelize.QueryTypes.SELECT });
 
         const pTopSoldItems = sequelize.query(`
-            SELECT TRIM(UPPER(${C('itemName')})) as "name", SUM(${C('totalAmount')}) as "value"
+            SELECT TRIM(UPPER(${C('itemName')})) as "name", SUM(${C('quantity')}) as "value"
             FROM ${T_Sales}
             GROUP BY TRIM(UPPER(${C('itemName')}))
             ORDER BY "value" DESC

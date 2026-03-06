@@ -422,25 +422,53 @@ const Reports = () => {
         return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
     }, [filteredSales]);
 
-    const exportToExcel = () => {
+    const applySheetStyles = (ws, colWidths = []) => {
+        if (!ws || !ws['!ref']) return;
+        if (colWidths.length > 0) ws['!cols'] = colWidths;
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+            for (let C = range.s.c; C <= range.e.c; ++C) {
+                const cell_address = { c: C, r: R };
+                const cell_ref = XLSX.utils.encode_cell(cell_address);
+                if (!ws[cell_ref]) continue;
+
+                ws[cell_ref].s = {
+                    font: { sz: 10 },
+                    alignment: { vertical: "center", horizontal: "left" },
+                    border: { top: { style: "thin", color: { rgb: "E2E8F0" } }, bottom: { style: "thin", color: { rgb: "E2E8F0" } } }
+                };
+
+                if (R === 0 && ws[cell_ref].v !== 'Report') {
+                    ws[cell_ref].s = {
+                        font: { bold: true, color: { rgb: "FFFFFF" } },
+                        fill: { fgColor: { rgb: "475569" } },
+                        alignment: { horizontal: "center", vertical: "center" },
+                        border: { bottom: { style: "medium", color: { rgb: "FFFFFF" } } }
+                    };
+                }
+
+                if (typeof ws[cell_ref].v === 'number') {
+                    ws[cell_ref].s.alignment.horizontal = "right";
+                }
+
+                const firstCellInRow = ws[XLSX.utils.encode_cell({ c: 0, r: R })];
+                if (firstCellInRow && firstCellInRow.v === 'TOTAL') {
+                    ws[cell_ref].s.font = { bold: true };
+                    ws[cell_ref].s.fill = { fgColor: { rgb: "F1F5F9" } };
+                    ws[cell_ref].s.border.top = { style: "medium" };
+                }
+            }
+        }
+    };
+
+    const exportPurchasesToExcel = () => {
         const wb = XLSX.utils.book_new();
 
-        // Summary Sheet Data Preparation
-        const summaryData = [
-            ["Report", `From ${formatDate(fromDate)} To ${formatDate(toDate)}`],
-            [],
-            ["Metric", "Weight (kg)"],
-            ["Total Purchase", metrics.purchaseWeight],
-            ["Total Sales", metrics.saleWeight],
-            ["Active Stock", metrics.activeStockWeight]
-        ];
-
-        // Purchase Sheet (Detailed Grouped)
+        // 1. Detailed Purchase History
         const pData = [];
-        let lastContainerId = null;
-
+        let lastId = null;
         flattenedPurchases.forEach(p => {
-            const isSame = lastContainerId === p.id;
+            const isSame = lastId === p.id;
             pData.push({
                 Date: isSame ? '' : formatDate(p.date),
                 ContainerNo: isSame ? '' : p.containerNo,
@@ -449,93 +477,40 @@ const Reports = () => {
                 NetWeight: p.itemQuantity,
                 AssortmentWeight: (isSame || !p.assortmentWeight) ? '' : parseFloat(p.assortmentWeight).toFixed(2)
             });
-            if (!isSame) lastContainerId = p.id;
+            if (!isSame) lastId = p.id;
         });
+        pData.push({ Date: 'TOTAL', ContainerNo: '', Firm: '', ItemName: '', NetWeight: metrics.purchaseWeight, AssortmentWeight: '' });
+        const wsP = XLSX.utils.json_to_sheet(pData);
+        applySheetStyles(wsP, [{ wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 10 }]);
+        XLSX.utils.book_append_sheet(wb, wsP, "Purchase History");
 
-        // Add Total Row for Purchases (Using metrics)
-        pData.push({
-            Date: 'TOTAL',
-            ContainerNo: '',
-            Firm: '',
-            ItemName: '',
-            NetWeight: metrics.purchaseWeight,
-            AssortmentWeight: ''
-        });
-
-        // Item Details Sheet (All single items)
+        // 2. Item Wise Breakdown
         const itemRows = [];
-        const itemMap = {}; // For Aggregation
-
         filteredContainers.forEach(c => {
-            if (c.items) {
-                c.items.forEach(i => {
-                    const qty = parseFloat(i.quantity) || 0;
-                    const amt = parseFloat(i.amount) || 0;
-                    const name = (i.itemName || 'Unknown').trim();
-
-                    // Add to detailed list
-                    itemRows.push({
-                        Date: formatDate(c.date),
-                        ContainerNo: c.containerNo,
-                        Firm: c.firm,
-                        ItemName: name,
-                        Quantity: qty,
-                        Rate: parseFloat(i.rate) || 0,
-                        Amount: amt
-                    });
-
-                    // Add to aggregate map
-                    if (!itemMap[name]) itemMap[name] = { weight: 0, amount: 0, stock: 0 };
-                    itemMap[name].weight += qty;
-                    itemMap[name].amount += amt;
-                    itemMap[name].stock += (parseFloat(i.remainingQuantity) || 0);
+            c.items?.forEach(i => {
+                itemRows.push({
+                    Date: formatDate(c.date),
+                    ContainerNo: c.containerNo,
+                    Firm: c.firm,
+                    ItemName: i.itemName,
+                    Quantity: parseFloat(i.quantity) || 0,
+                    Rate: parseFloat(i.rate) || 0,
+                    Amount: parseFloat(i.amount) || 0
                 });
-            }
+            });
         });
+        itemRows.push({ Date: 'TOTAL', ContainerNo: '', Firm: '', ItemName: '', Quantity: metrics.purchaseWeight, Rate: '', Amount: metrics.purchaseAmount });
+        const wsDetails = XLSX.utils.json_to_sheet(itemRows);
+        applySheetStyles(wsDetails, [{ wch: 12 }, { wch: 15 }, { wch: 20 }]);
+        XLSX.utils.book_append_sheet(wb, wsDetails, "Item Details");
 
-        // Add Total Row for Item Details
-        const totalDetailsWeight = itemRows.reduce((sum, r) => sum + r.Quantity, 0);
-        const totalDetailsAmount = itemRows.reduce((sum, r) => sum + r.Amount, 0);
-        itemRows.push({
-            Date: 'TOTAL',
-            ContainerNo: '',
-            Firm: '',
-            ItemName: '',
-            Quantity: totalDetailsWeight,
-            Rate: '',
-            Amount: totalDetailsAmount
-        });
+        XLSX.writeFile(wb, `Purchases_Report_${fromDate}_to_${toDate}.xlsx`);
+    };
 
-        // Item Summary Sheet (Aggregated)
-        const itemSummaryRows = Object.entries(itemMap)
-            .filter(([_, data]) => data.weight > 0) // Filter out items with 0 weight
-            .map(([name, data]) => ({
-                ItemName: name,
-                TotalPurchase: data.weight,
-                TotalSold: data.weight - data.stock,
-                ActiveStock: data.stock,
-                AverageRate: data.weight > 0 ? (data.amount / data.weight) : 0,
-                TotalAmount: data.amount
-            }))
-            .sort((a, b) => b.TotalWeight - a.TotalWeight);
-
-        // Add Total Row for Item Summary
-        const totalSumWeight = itemSummaryRows.reduce((sum, r) => sum + r.TotalPurchase, 0);
-        const totalSumStock = itemSummaryRows.reduce((sum, r) => sum + r.ActiveStock, 0);
-        const totalSumAmount = itemSummaryRows.reduce((sum, r) => sum + r.TotalAmount, 0);
-        itemSummaryRows.push({
-            ItemName: 'TOTAL',
-            TotalPurchase: totalSumWeight,
-            TotalSold: totalSumWeight - totalSumStock,
-            ActiveStock: totalSumStock,
-            AverageRate: '',
-            TotalAmount: totalSumAmount
-        });
-
-        // Sales Sheet
+    const exportSalesToExcel = () => {
+        const wb = XLSX.utils.book_new();
         const sData = [];
         let lastInvoice = null;
-
         filteredSales.forEach(s => {
             const isSame = lastInvoice === s.invoiceNo;
             sData.push({
@@ -548,143 +523,177 @@ const Reports = () => {
             });
             if (!isSame) lastInvoice = s.invoiceNo;
         });
+        sData.push({ Date: 'TOTAL', InvoiceNo: '', Buyer: '', ItemName: '', Weight: metrics.saleWeight, Amount: metrics.saleAmount });
+        const wsS = XLSX.utils.json_to_sheet(sData);
+        applySheetStyles(wsS, [{ wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 20 }]);
+        XLSX.utils.book_append_sheet(wb, wsS, "Sales History");
 
-        // Add Total Row for Sales
-        sData.push({
-            Date: 'TOTAL',
-            InvoiceNo: '',
-            Buyer: '',
-            ItemName: '', // Added empty for total row
-            Weight: metrics.saleWeight,
-            Amount: metrics.saleAmount
+        XLSX.writeFile(wb, `Sales_Report_${fromDate}_to_${toDate}.xlsx`);
+    };
+
+    const exportToExcel = () => {
+        if (activeTab === 'purchases') return exportPurchasesToExcel();
+        if (activeTab === 'sales') return exportSalesToExcel();
+        if (activeTab === 'stock') return exportStockToExcel();
+
+        const wb = XLSX.utils.book_new();
+
+        // Summary Sheet
+        const summaryData = [
+            ["Report", `From ${formatDate(fromDate)} To ${formatDate(toDate)}`],
+            [],
+            ["Metric", "Weight (kg)"],
+            ["Total Purchase", metrics.purchaseWeight],
+            ["Total Sales", metrics.saleWeight],
+            ["Active Stock", metrics.activeStockWeight]
+        ];
+
+        // Purchase Data
+        const pData = [];
+        let lastContainerId = null;
+        flattenedPurchases.forEach(p => {
+            const isSame = lastContainerId === p.id;
+            pData.push({
+                Date: isSame ? '' : formatDate(p.date),
+                ContainerNo: isSame ? '' : p.containerNo,
+                Firm: isSame ? '' : p.firm,
+                ItemName: p.itemName,
+                NetWeight: p.itemQuantity,
+                AssortmentWeight: (isSame || !p.assortmentWeight) ? '' : parseFloat(p.assortmentWeight).toFixed(2)
+            });
+            if (!isSame) lastContainerId = p.id;
         });
+        pData.push({ Date: 'TOTAL', ContainerNo: '', Firm: '', ItemName: '', NetWeight: metrics.purchaseWeight, AssortmentWeight: '' });
 
-        // --- NEW: FULL REPORT SHEET (Combined) ---
-        // Create a single sheet with all tables stacked
-        const fullReportData = [];
-
-        // 1. Title
-        fullReportData.push(["BUSINESS REPORT", `From ${formatDate(fromDate)} To ${formatDate(toDate)}`]);
-        fullReportData.push([]); // Spacer
-
-        // 2. Metrics
-        fullReportData.push(["METRICS SUMMARY"]);
-        fullReportData.push(["Metric", "Weight (kg)", "Amount (Rs)"]);
-        fullReportData.push(["Total Purchase", metrics.purchaseWeight, metrics.purchaseAmount]);
-        fullReportData.push(["Total Sales", metrics.saleWeight, metrics.saleAmount]);
-        fullReportData.push(["Active Stock", metrics.activeStockWeight, metrics.activeStockAmount]);
-        fullReportData.push([]); // Spacer
-
-        // 3. Purchase History
-        fullReportData.push(["PURCHASE HISTORY"]);
-        fullReportData.push(["Date", "Container No", "Firm", "Item Name", "Net Weight", "Amount"]);
-        pData.forEach(p => {
-            fullReportData.push([p.Date, p.ContainerNo, p.Firm, p.ItemName, p.NetWeight, p.Amount]);
+        // Item Details & Map
+        const itemRows = [];
+        const itemMap = {};
+        filteredContainers.forEach(c => {
+            c.items?.forEach(i => {
+                const qty = parseFloat(i.quantity) || 0;
+                const amt = parseFloat(i.amount) || 0;
+                const name = (i.itemName || 'Unknown').trim();
+                itemRows.push({ Date: formatDate(c.date), ContainerNo: c.containerNo, Firm: c.firm, ItemName: name, Quantity: qty, Rate: parseFloat(i.rate) || 0, Amount: amt });
+                if (!itemMap[name]) itemMap[name] = { weight: 0, amount: 0, stock: 0 };
+                itemMap[name].weight += qty;
+                itemMap[name].amount += amt;
+                itemMap[name].stock += (parseFloat(i.remainingQuantity) || 0);
+            });
         });
-        fullReportData.push([]); // Spacer
+        itemRows.push({ Date: 'TOTAL', ContainerNo: '', Firm: '', ItemName: '', Quantity: metrics.purchaseWeight, Rate: '', Amount: metrics.purchaseAmount });
 
-        // 4. Sales History
-        fullReportData.push(["SALES HISTORY"]);
-        fullReportData.push(["Date", "Invoice No", "Buyer", "Item Name", "Weight", "Amount"]); // Added Header
-        sData.forEach(s => {
-            fullReportData.push([s.Date, s.InvoiceNo, s.Buyer, s.ItemName, s.Weight, s.Amount]); // Added Data
+        const itemSummaryRows = Object.entries(itemMap)
+            .filter(([_, data]) => data.weight > 0)
+            .map(([name, data]) => ({
+                ItemName: name,
+                TotalPurchase: data.weight,
+                TotalSold: data.weight - data.stock,
+                ActiveStock: data.stock,
+                AverageRate: data.weight > 0 ? (data.amount / data.weight) : 0,
+                TotalAmount: data.amount
+            }))
+            .sort((a, b) => b.TotalPurchase - a.TotalPurchase);
+
+        // Sales Data
+        const sData = [];
+        let lastInvoice = null;
+        filteredSales.forEach(s => {
+            const isSame = lastInvoice === s.invoiceNo;
+            sData.push({
+                Date: isSame ? '' : formatDate(s.date),
+                InvoiceNo: isSame ? '' : s.invoiceNo,
+                Buyer: isSame ? '' : s.buyerName,
+                ItemName: s.itemName || 'Unknown',
+                Weight: s.quantity,
+                Amount: s.totalAmount
+            });
+            if (!isSame) lastInvoice = s.invoiceNo;
         });
-        fullReportData.push([]); // Spacer
+        sData.push({ Date: 'TOTAL', InvoiceNo: '', Buyer: '', ItemName: '', Weight: metrics.saleWeight, Amount: metrics.saleAmount });
 
-        // 5. Item Wise Summary
-        fullReportData.push(["ITEM WISE SUMMARY"]);
-        fullReportData.push(["Item Name", "Total Purchase", "Total Sold", "Active Stock", "Avg Rate", "Total Amount"]);
-        itemSummaryRows.forEach(i => {
-            if (i.ItemName !== 'TOTAL') { // Avoid duplicating TOTAL row if already in array
-                fullReportData.push([i.ItemName, i.TotalPurchase, i.TotalSold, i.ActiveStock, i.AverageRate, i.TotalAmount]);
-            }
-        });
-        // Add TOTAL manually or use the one from itemSummaryRows if preferred.
-        // itemSummaryRows already has TOTAL.
-        fullReportData.push(["TOTAL", totalSumWeight, (totalSumWeight - totalSumStock), totalSumStock, "-", totalSumAmount]);
-
-
-        // Helper to Style Sheet
-        const applySheetStyles = (ws, colWidths = []) => {
-            // Column Widths
-            if (colWidths.length > 0) ws['!cols'] = colWidths;
-
-            // Styles
-            const range = XLSX.utils.decode_range(ws['!ref']);
-            for (let R = range.s.r; R <= range.e.r; ++R) {
-                for (let C = range.s.c; C <= range.e.c; ++C) {
-                    const cell_address = { c: C, r: R };
-                    const cell_ref = XLSX.utils.encode_cell(cell_address);
-                    if (!ws[cell_ref]) continue;
-
-                    // Defaults
-                    ws[cell_ref].s = {
-                        font: { sz: 10 },
-                        alignment: { vertical: "center", horizontal: "left" },
-                        border: { top: { style: "thin", color: { rgb: "E2E8F0" } }, bottom: { style: "thin", color: { rgb: "E2E8F0" } } }
-                    };
-
-                    // Headers
-                    if (R === 0 && ws[cell_ref].v !== 'Report') { // Skip Title
-                        ws[cell_ref].s = {
-                            font: { bold: true, color: { rgb: "FFFFFF" } },
-                            fill: { fgColor: { rgb: "475569" } }, // Slate 600
-                            alignment: { horizontal: "center", vertical: "center" },
-                            border: { bottom: { style: "medium", color: { rgb: "FFFFFF" } } }
-                        };
-                    }
-
-                    // Numeric Alignment
-                    if (typeof ws[cell_ref].v === 'number') {
-                        ws[cell_ref].s.alignment.horizontal = "right";
-                    }
-
-                    // Total Rows (Check if first cell is TOTAL)
-                    const firstCellInRow = ws[XLSX.utils.encode_cell({ c: 0, r: R })];
-                    if (firstCellInRow && firstCellInRow.v === 'TOTAL') {
-                        ws[cell_ref].s.font = { bold: true };
-                        ws[cell_ref].s.fill = { fgColor: { rgb: "F1F5F9" } }; // Slate 100
-                        ws[cell_ref].s.border.top = { style: "medium" };
-                    }
-                }
-            }
-        };
-
-        // --- 2. Create Sheets with Styles ---
-
-        // A. Summary Sheet
         const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
-        // Custom Style for Summary
         XLSX.utils.book_append_sheet(wb, summaryWs, "Summary");
 
-
-        // B. Purchase Sheet
         const wsP = XLSX.utils.json_to_sheet(pData);
         applySheetStyles(wsP, [{ wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 10 }]);
         XLSX.utils.book_append_sheet(wb, wsP, "Purchases");
 
-        // C. Item Details Sheet
         const wsItems = XLSX.utils.json_to_sheet(itemRows);
         applySheetStyles(wsItems, [{ wch: 12 }, { wch: 15 }, { wch: 20 }]);
         XLSX.utils.book_append_sheet(wb, wsItems, "Item Details");
 
-        // D. Item Summary Sheet
         const wsItemSum = XLSX.utils.json_to_sheet(itemSummaryRows);
         applySheetStyles(wsItemSum, [{ wch: 20 }, { wch: 15 }, { wch: 15 }]);
         XLSX.utils.book_append_sheet(wb, wsItemSum, "Item Summary");
 
-        // E. Sales Sheet
         const wsS = XLSX.utils.json_to_sheet(sData);
-        applySheetStyles(wsS, [{ wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 20 }]); // Added width for Item Name
+        applySheetStyles(wsS, [{ wch: 12 }, { wch: 15 }, { wch: 20 }, { wch: 20 }]);
         XLSX.utils.book_append_sheet(wb, wsS, "Sales");
 
-        XLSX.writeFile(wb, `Report_${fromDate || 'All'}_to_${toDate || 'Present'}.xlsx`);
+        XLSX.writeFile(wb, `Full_Report_${fromDate || 'All'}_to_${toDate || 'Present'}.xlsx`);
+    };
+
+
+    const exportPurchasesToPDF = () => {
+        const doc = new jsPDF();
+        doc.setFontSize(18);
+        doc.text("Purchase Report", 14, 20);
+        doc.setFontSize(10);
+        doc.text(`Period: ${formatDate(fromDate)} to ${formatDate(toDate)}`, 14, 28);
+
+        autoTable(doc, {
+            startY: 35,
+            head: [['Date', 'Container', 'Firm', 'Item Name', 'Weight']],
+            body: flattenedPurchases.map((p, i) => {
+                const isSame = i > 0 && flattenedPurchases[i - 1].id === p.id;
+                return [
+                    isSame ? '' : formatDate(p.date),
+                    isSame ? '' : p.containerNo,
+                    isSame ? '' : p.firm,
+                    p.itemName,
+                    p.itemQuantity.toFixed(2)
+                ];
+            }),
+            foot: [['TOTAL', '', '', '', metrics.purchaseWeight.toFixed(2)]],
+            theme: 'striped',
+            headStyles: { fillColor: [52, 73, 94] },
+            footStyles: { fillColor: [52, 73, 94], fontStyle: 'bold' }
+        });
+        doc.save(`Purchases_Report_${fromDate}_to_${toDate}.pdf`);
+    };
+
+    const exportSalesToPDF = () => {
+        const doc = new jsPDF();
+        doc.setFontSize(18);
+        doc.text("Sales Report", 14, 20);
+        doc.setFontSize(10);
+        doc.text(`Period: ${formatDate(fromDate)} to ${formatDate(toDate)}`, 14, 28);
+
+        autoTable(doc, {
+            startY: 35,
+            head: [['Date', 'Invoice', 'Buyer', 'Item Name', 'Weight', 'Amount']],
+            body: filteredSales.map(s => [
+                formatDate(s.date),
+                s.invoiceNo,
+                s.buyerName,
+                s.itemName || 'Unknown',
+                parseFloat(s.quantity).toFixed(2),
+                parseFloat(s.totalAmount).toLocaleString('en-IN')
+            ]),
+            foot: [['TOTAL', '', '', '', metrics.saleWeight.toFixed(2), metrics.saleAmount.toLocaleString('en-IN')]],
+            theme: 'striped',
+            headStyles: { fillColor: [39, 174, 96] },
+            footStyles: { fillColor: [39, 174, 96], fontStyle: 'bold' }
+        });
+        doc.save(`Sales_Report_${fromDate}_to_${toDate}.pdf`);
     };
 
     const exportToPDF = () => {
-        const doc = new jsPDF();
+        if (activeTab === 'purchases') return exportPurchasesToPDF();
+        if (activeTab === 'sales') return exportSalesToPDF();
+        if (activeTab === 'stock') return exportStockToPDF();
 
-        // Title & Date
+        const doc = new jsPDF();
         doc.setFontSize(18);
         doc.text("Business Report", 14, 20);
         doc.setFontSize(10);
@@ -703,20 +712,14 @@ const Reports = () => {
             headStyles: { fillColor: [41, 128, 185] }
         });
 
-        // Purchase Table (Detailed Grouped)
+        // Purchase Table
         doc.text("Purchase History", 14, (doc.lastAutoTable?.finalY || 35) + 10);
         autoTable(doc, {
             startY: (doc.lastAutoTable?.finalY || 35) + 15,
             head: [['Date', 'Container', 'Firm', 'Item Name', 'Weight']],
             body: flattenedPurchases.map((p, i) => {
                 const isSame = i > 0 && flattenedPurchases[i - 1].id === p.id;
-                return [
-                    isSame ? '' : formatDate(p.date),
-                    isSame ? '' : p.containerNo,
-                    isSame ? '' : p.firm,
-                    p.itemName,
-                    p.itemQuantity.toFixed(2)
-                ];
+                return [isSame ? '' : formatDate(p.date), isSame ? '' : p.containerNo, isSame ? '' : p.firm, p.itemName, p.itemQuantity.toFixed(2)];
             }),
             foot: [['TOTAL', '', '', '', metrics.purchaseWeight.toFixed(2)]],
             theme: 'striped',
@@ -727,87 +730,53 @@ const Reports = () => {
 
         // Sales Table
         let finalY = (doc.lastAutoTable?.finalY || 20) + 10;
-        // Check if page break needed
-        if (finalY > 250) {
-            doc.addPage();
-            finalY = 20;
-        }
-
+        if (finalY > 250) { doc.addPage(); finalY = 20; }
         doc.text("Sales History", 14, finalY);
         autoTable(doc, {
             startY: finalY + 5,
-            head: [['Date', 'Invoice', 'Buyer', 'Item Name', 'Weight', 'Amount']], // Added Header
-            body: filteredSales.map(s => [
-                formatDate(s.date),
-                s.invoiceNo,
-                s.buyerName,
-                s.itemName || 'Unknown', // Added Data
-                parseFloat(s.quantity).toFixed(2),
-                parseFloat(s.totalAmount).toLocaleString('en-IN')
-            ]),
-            foot: [['TOTAL', '', '', '', metrics.saleWeight.toFixed(2), metrics.saleAmount.toLocaleString('en-IN')]], // Adjusted footer colspan implicit
+            head: [['Date', 'Invoice', 'Buyer', 'Item Name', 'Weight', 'Amount']],
+            body: filteredSales.map(s => [formatDate(s.date), s.invoiceNo, s.buyerName, s.itemName || 'Unknown', parseFloat(s.quantity).toFixed(2), parseFloat(s.totalAmount).toLocaleString('en-IN')]),
+            foot: [['TOTAL', '', '', '', metrics.saleWeight.toFixed(2), metrics.saleAmount.toLocaleString('en-IN')]],
             theme: 'striped',
             headStyles: { fillColor: [39, 174, 96] },
             footStyles: { fillColor: [39, 174, 96], fontStyle: 'bold' }
         });
 
-        // Item Summary Table (Aggregated)
+        // Item Summary Table
         let itemSumY = (doc.lastAutoTable?.finalY || 20) + 10;
-        if (itemSumY > 250) {
-            doc.addPage();
-            itemSumY = 20;
-        }
-
-        // Calculate Aggregation for PDF
+        if (itemSumY > 250) { doc.addPage(); itemSumY = 20; }
         const pdfItemMap = {};
         filteredContainers.forEach(c => {
-            if (c.items) {
-                c.items.forEach(i => {
-                    const name = (i.itemName || 'Unknown').trim();
-                    if (!pdfItemMap[name]) pdfItemMap[name] = { weight: 0, amount: 0, stock: 0 };
-                    pdfItemMap[name].weight += (parseFloat(i.quantity) || 0);
-                    pdfItemMap[name].amount += (parseFloat(i.amount) || 0);
-                    pdfItemMap[name].stock += (parseFloat(i.remainingQuantity) || 0);
-                });
-            }
+            c.items?.forEach(i => {
+                const name = (i.itemName || 'Unknown').trim();
+                if (!pdfItemMap[name]) pdfItemMap[name] = { weight: 0, amount: 0, stock: 0 };
+                pdfItemMap[name].weight += (parseFloat(i.quantity) || 0);
+                pdfItemMap[name].amount += (parseFloat(i.amount) || 0);
+                pdfItemMap[name].stock += (parseFloat(i.remainingQuantity) || 0);
+            });
         });
         const pdfItemRows = Object.entries(pdfItemMap)
-            .filter(([_, data]) => data.weight > 0) // Filter items with 0 weight
-            .map(([name, data]) => [
-                name,
-                data.weight.toFixed(2),
-                (data.weight - data.stock).toFixed(2), // Sold
-                data.stock.toFixed(2),
-                (data.weight > 0 ? (data.amount / data.weight).toFixed(2) : '0.00'),
-                data.amount.toLocaleString('en-IN')
-            ])
+            .filter(([_, data]) => data.weight > 0)
+            .map(([name, data]) => [name, data.weight.toFixed(2), (data.weight - data.stock).toFixed(2), data.stock.toFixed(2), (data.weight > 0 ? (data.amount / data.weight).toFixed(2) : '0.00'), data.amount.toLocaleString('en-IN')])
             .sort((a, b) => parseFloat(b[1]) - parseFloat(a[1]));
 
-        const totalItemWeight = Object.values(pdfItemMap)
-            .filter(item => item.weight > 0)
-            .reduce((sum, item) => sum + item.weight, 0);
-        const totalItemStock = Object.values(pdfItemMap)
-            .filter(item => item.weight > 0)
-            .reduce((sum, item) => sum + item.stock, 0);
-        const totalItemSold = totalItemWeight - totalItemStock;
-        const totalItemAmount = Object.values(pdfItemMap)
-            .filter(item => item.weight > 0)
-            .reduce((sum, item) => sum + item.amount, 0);
+        const totalItemWeight = Object.values(pdfItemMap).reduce((sum, item) => sum + item.weight, 0);
+        const totalItemStock = Object.values(pdfItemMap).reduce((sum, item) => sum + item.stock, 0);
+        const totalItemAmount = Object.values(pdfItemMap).reduce((sum, item) => sum + item.amount, 0);
 
         doc.text("Item Wise Summary", 14, itemSumY);
         autoTable(doc, {
             startY: itemSumY + 5,
             head: [['Item Name', 'Total Purchase', 'Total Sold', 'Active Stock', 'Avg Rate', 'Total Amount']],
             body: pdfItemRows,
-            foot: [['TOTAL', totalItemWeight.toFixed(2), totalItemSold.toFixed(2), totalItemStock.toFixed(2), '-', totalItemAmount.toLocaleString('en-IN')]],
+            foot: [['TOTAL', totalItemWeight.toFixed(2), (totalItemWeight - totalItemStock).toFixed(2), totalItemStock.toFixed(2), '-', totalItemAmount.toLocaleString('en-IN')]],
             theme: 'striped',
             styles: { fontSize: 8 },
             headStyles: { fillColor: [243, 156, 18] },
             footStyles: { fillColor: [243, 156, 18], fontStyle: 'bold' }
         });
 
-
-        doc.save(`Report_${fromDate}_to_${toDate}.pdf`);
+        doc.save(`Full_Report_${fromDate}_to_${toDate}.pdf`);
     };
 
     const exportStockToExcel = () => {
@@ -1027,20 +996,20 @@ const Reports = () => {
                             className={`w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 border border-slate-200 rounded-lg text-sm font-bold shadow-sm transition-all whitespace-nowrap ${showExportMenu ? 'bg-slate-100 text-slate-800' : 'bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}
                         >
                             <Download size={16} />
-                            <span className="hidden sm:inline">Export Report</span>
+                            <span className="hidden sm:inline">Export {activeTab === 'overview' ? 'Report' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}</span>
                             <ArrowDownRight size={14} className={`transition-transform duration-200 ${showExportMenu ? 'rotate-180' : ''}`} />
                         </button>
 
                         {showExportMenu && (
                             <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-100 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-200 origin-top-right">
                                 <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                                    Download As
+                                    Download {activeTab === 'overview' ? 'Full Report' : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
                                 </div>
                                 <button
                                     onClick={() => { exportToExcel(); setShowExportMenu(false); }}
                                     className="w-full text-left px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-green-700 flex items-center gap-3 transition-colors"
                                 >
-                                    <FileText size={16} className="text-green-600" /> Excel Report
+                                    <FileText size={16} className="text-green-600" /> Excel Spreadsheet
                                 </button>
                                 <button
                                     onClick={() => { exportToPDF(); setShowExportMenu(false); }}
